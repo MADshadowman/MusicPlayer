@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-accent="teal">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A personal music player with visualizations and playlists — plain HTML/CSS/JS, no build step."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0e0e11" />
+    <title>MusicPlayer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-playing="false">
+    <svg class="sprite" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5-11-6.5Z" /></symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.4v14H7V5Zm6.6 0H17v14h-3.4V5Z" /></symbol>
+        <symbol id="i-prev" viewBox="0 0 24 24"><path d="M7 6h2.2v12H7V6Zm11.5 0v12l-9-6 9-6Z" /></symbol>
+        <symbol id="i-next" viewBox="0 0 24 24"><path d="M14.8 6H17v12h-2.2V6ZM5.5 6v12l9-6-9-6Z" /></symbol>
+        <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M17 3l4 4-4 4V8.5h-1.1c-.7 0-1.4.2-2 .6C13 9.6 12.3 10.7 11.5 12c-1 1.9-2 3.5-3.2 4.5-1 .9-2.3 1.5-3.6 1.5H3v-2h1.7c.7 0 1.4-.2 2-.6C8 13.4 8.7 12.3 9.5 11c1-1.9 2-3.5 3.2-4.5 1-.9 2.3-1.5 3.6-1.5H17V3ZM3 6h1.7c1 0 2 .4 2.8 1-.5.6-1 1.3-1.5 2.1l-.4.7C4.9 9.2 4.7 9 4.5 9H3V6Zm14 9h.001V17.5h-1.7c-1 0-2-.4-2.8-1 .5-.6 1-1.4 1.5-2.1l.4-.7c.7.6.9.8 1.1.8H17v-1.5l4 3.5-4 4V15Z" /></symbol>
+        <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z" /></symbol>
+        <symbol id="i-repeat-one" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4ZM12 10h1.5v5H12.2v-3.7l-1 .3-.3-1 1.4-.6h.3Z" /></symbol>
+        <symbol id="i-volume-high" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14L7.5 14.5H4v-5Zm10.2-1.2a5.4 5.4 0 0 1 0 7.4l1.3 1.3a7.2 7.2 0 0 0 0-10l-1.3 1.3Zm2.4-2.5a8.9 8.9 0 0 1 0 12.4l1.3 1.3a10.7 10.7 0 0 0 0-15l-1.3 1.3Z" /></symbol>
+        <symbol id="i-volume-low" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14L7.5 14.5H4v-5Zm10.2-1.2a5.4 5.4 0 0 1 0 7.4l1.3 1.3a7.2 7.2 0 0 0 0-10l-1.3 1.3Z" /></symbol>
+        <symbol id="i-volume-mute" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14L7.5 14.5H4v-5Zm12.1-.6 1.3-1.3 2 2 2-2 1.3 1.3-2 2 2 2-1.3 1.3-2-2-2 2-1.3-1.3 2-2-2-2Z" /></symbol>
+        <symbol id="i-viz" viewBox="0 0 24 24"><path d="M3 14h3v7H3v-7Zm5-4h3v11H8V10Zm5 2h3v9h-3v-9Zm5-6h3v15h-3V6Z" /></symbol>
+        <symbol id="i-viz-full" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9h-2A7 7 0 1 1 12 5V3Zm3 0 4 4-4 4V9.5h-1.9c-.5 0-1 .2-1.4.6l-1.4-1.4a3.9 3.9 0 0 1 2.8-1.2H15V3Z" /></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" /></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 13H7L6 9Zm4 2 .8 9h1.4L12 11h-2Z" /></symbol>
+        <symbol id="i-play-circle" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm-2 5v10l8-5-8-5Z" /></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><path d="M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.3 4.3-1.4 1.4-4.3-4.3A7.5 7.5 0 1 1 10.5 3Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z" /></symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6l2 2h10v12H3V5Zm2 4v8h14V9H5Z" /></symbol>
+        <symbol id="i-reload" viewBox="0 0 24 24"><path d="M12 4a8 8 0 1 1-7.4 5h2.2A6 6 0 1 0 12 6v3L7.5 5.5 12 2v2Z" /></symbol>
+        <symbol id="i-help" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20Zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 12.5A1.25 1.25 0 1 1 10.75 18 1.25 1.25 0 0 1 12 16.5ZM12 6a4 4 0 0 1 2.6 7c-.7.6-1.1 1-1.1 1.5v.3h-2v-.4a3.3 3.3 0 0 1 1.5-2.5A2 2 0 1 0 10 10H8a4 4 0 0 1 4-4Z" /></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z" /></symbol>
+        <symbol id="i-gear" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22l-1.92 3.32c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.92 0 .31.02.63.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 0 0-.12-.61l-2.01-1.58ZM12 15.6a3.6 3.6 0 1 1 0-7.2 3.6 3.6 0 0 1 0 7.2Z" /></symbol>
+        <symbol id="i-art" viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Z" /></symbol>
+        <symbol id="i-home" viewBox="0 0 24 24"><path d="M12 3 3 10.2V21h6v-6h6v6h6V10.2L12 3Z" /></symbol>
+        <symbol id="i-album" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12Zm0 3.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8Z" /></symbol>
+        <symbol id="i-queue" viewBox="0 0 24 24"><path d="M3 6h13v2H3V6Zm0 5h13v2H3v-2Zm0 5h9v2H3v-2Zm15-1.5 6 3.5-6 3.5v-7Z" /></symbol>
+        <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z" /></symbol>
+        <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M3 4h18v16H3V4Zm2 2v12h14V6H5Zm2 1h4v10H7V7Z" /></symbol>
+      </defs>
+    </svg>
+
+    <!-- Left rail -->
+    <nav class="nav" id="nav">
+      <div class="nav-brand">
+        <svg aria-hidden="true" class="nav-logo"><use href="#i-viz" /></svg>
+        <span class="nav-name">MusicPlayer</span>
+      </div>
+      <button class="nav-item" type="button" data-nav="home" role="tab" aria-selected="true">
+        <svg aria-hidden="true"><use href="#i-home" /></svg><span>Home</span>
+      </button>
+      <button class="nav-item" type="button" data-nav="albums" role="tab" aria-selected="false">
+        <svg aria-hidden="true"><use href="#i-album" /></svg><span>Albums</span>
+      </button>
+      <button class="nav-item" type="button" data-nav="playlists" role="tab" aria-selected="false">
+        <svg aria-hidden="true"><use href="#i-queue" /></svg><span>Playlists</span>
+      </button>
+      <div class="nav-section">
+        <div class="nav-section-head">
+          <span>Playlists</span>
+          <button id="newPlaylistBtn" class="nav-add" type="button" title="New playlist" aria-label="New playlist">
+            <svg aria-hidden="true"><use href="#i-plus" /></svg>
+          </button>
+        </div>
+        <div id="navPlaylists" class="nav-playlists"></div>
+      </div>
+      <div class="nav-foot">
+        <button id="pickFolderBtn" class="nav-foot-btn" type="button" title="Open a local folder">
+          <svg aria-hidden="true"><use href="#i-folder" /></svg><span>Open folder</span>
+        </button>
+        <button id="reloadLibraryBtn" class="nav-foot-btn" type="button" title="Reload the library">
+          <svg aria-hidden="true"><use href="#i-reload" /></svg><span>Reload</span>
+        </button>
+        <button id="settingsBtn" class="nav-foot-btn" type="button" title="Settings" aria-expanded="false" aria-haspopup="true">
+          <svg aria-hidden="true"><use href="#i-gear" /></svg><span>Settings</span>
+        </button>
+        <button id="helpBtn" class="nav-foot-btn" type="button" title="Keyboard shortcuts (?)">
+          <svg aria-hidden="true"><use href="#i-help" /></svg><span>Shortcuts</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <main class="content" id="content">
+      <header class="content-head">
+        <button id="navToggle" class="ghost-round nav-collapse" type="button" title="Toggle sidebar">
+          <svg aria-hidden="true"><use href="#i-collapse" /></svg>
+        </button>
+        <label class="search-wrap" for="searchInput">
+          <svg class="search-icon" aria-hidden="true"><use href="#i-search" /></svg>
+          <span class="sr-only">Search</span>
+          <input id="searchInput" type="search" placeholder="Search your library..." autocomplete="off" />
+        </label>
+        <span id="resultCount" class="sr-only"></span>
+        <label class="sort-wrap" for="sortSelect">
+          <select id="sortSelect" title="Sort order">
+            <option value="title-asc" selected>Sort: Title A→Z</option>
+            <option value="title-desc">Sort: Title Z→A</option>
+            <option value="artist-asc">Sort: Artist</option>
+            <option value="duration-asc">Sort: Shortest</option>
+            <option value="duration-desc">Sort: Longest</option>
+            <option value="date-desc">Sort: Newest</option>
+          </select>
+        </label>
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+
+    <!-- Bottom playbar -->
+    <footer class="playbar">
+      <div class="pb-left">
+        <button class="pb-art" id="pbArt" type="button" title="Go to album">
+          <svg class="pb-art-fallback" aria-hidden="true"><use href="#i-art" /></svg>
+        </button>
+        <div class="pb-meta">
+          <button class="pb-title" id="pbTitle" type="button">No track selected</button>
+          <span class="pb-artist" id="pbArtist">Load some music to begin</span>
+        </div>
+        <button class="pb-add" id="pbAddBtn" type="button" title="Add to playlist" aria-label="Add to playlist" hidden>
+          <svg aria-hidden="true"><use href="#i-plus" /></svg>
+        </button>
+      </div>
+      <div class="pb-center">
+        <div class="pb-controls">
+          <button id="shuffleBtn" class="pb-ctl sm" type="button" title="Shuffle (S)" aria-label="Shuffle">
+            <svg aria-hidden="true"><use href="#i-shuffle" /></svg>
+          </button>
+          <button id="prevBtn" class="pb-ctl" type="button" title="Previous (P)" aria-label="Previous track">
+            <svg aria-hidden="true"><use href="#i-prev" /></svg>
+          </button>
+          <button id="playPauseBtn" class="pb-play" type="button" title="Play/Pause (Space)" aria-label="Play or pause">
+            <svg aria-hidden="true" class="icon-play"><use href="#i-play" /></svg>
+            <svg aria-hidden="true" class="icon-pause"><use href="#i-pause" /></svg>
+          </button>
+          <button id="nextBtn" class="pb-ctl" type="button" title="Next (N)" aria-label="Next track">
+            <svg aria-hidden="true"><use href="#i-next" /></svg>
+          </button>
+          <button id="repeatBtn" class="pb-ctl sm" type="button" title="Repeat (R)" aria-label="Repeat">
+            <svg aria-hidden="true" class="icon-repeat"><use href="#i-repeat" /></svg>
+            <svg aria-hidden="true" class="icon-repeat-one"><use href="#i-repeat-one" /></svg>
+          </button>
+        </div>
+        <div class="pb-seek">
+          <span id="currentTimeLabel" class="pb-time">0:00</span>
+          <input id="seekSlider" class="pb-slider" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+          <span id="totalTimeLabel" class="pb-time">0:00</span>
+        </div>
+      </div>
+      <div class="pb-right">
+        <canvas id="miniViz" width="120" height="44" aria-hidden="true"></canvas>
+        <button id="vizOpenBtn" class="pb-ctl" type="button" title="Visualizer (V)" aria-label="Visualizer">
+          <svg aria-hidden="true"><use href="#i-viz" /></svg>
+        </button>
+        <button id="muteBtn" class="pb-ctl" type="button" title="Mute (M)" aria-label="Mute or unmute">
+          <svg aria-hidden="true" class="icon-vol-high"><use href="#i-volume-high" /></svg>
+          <svg aria-hidden="true" class="icon-vol-low"><use href="#i-volume-low" /></svg>
+          <svg aria-hidden="true" class="icon-vol-mute"><use href="#i-volume-mute" /></svg>
+        </button>
+        <input id="volumeSlider" class="pb-slider volume" type="range" min="0" max="1" value="1" step="0.01" aria-label="Volume" />
+      </div>
+    </footer>
+
+    <!-- Immersive visualizer overlay -->
+    <div class="viz-layer" id="vizLayer" hidden>
+      <canvas id="vizCanvas"></canvas>
+      <button id="vizCloseBtn" class="viz-close" type="button" title="Close visualizer (Esc)" aria-label="Close visualizer">
+        <svg aria-hidden="true"><use href="#i-close" /></svg>
+      </button>
+      <div class="viz-hud" id="vizHud">
+        <button class="viz-hud-arrow" id="vizPrevPreset" type="button" aria-label="Previous visualizer">‹</button>
+        <div class="viz-hud-mid">
+          <span id="vizName" class="viz-name">Spectrum</span>
+          <div id="vizDots" class="viz-dots"></div>
+        </div>
+        <button class="viz-hud-arrow" id="vizNextPreset" type="button" aria-label="Next visualizer">›</button>
+      </div>
+    </div>
+
+    <!-- Settings panel -->
+    <div class="settings-panel" id="settingsPanel" hidden>
+      <div class="setting-item">
+        <label for="vizPresetSelect">Default visualizer</label>
+        <select id="vizPresetSelect"></select>
+      </div>
+      <div class="setting-item">
+        <label for="themeSelect">Theme</label>
+        <select id="themeSelect">
+          <option value="auto">Auto (system)</option>
+          <option value="dark" selected>Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+      <div class="setting-item">
+        <label for="accentSelect">Accent</label>
+        <select id="accentSelect">
+          <option value="teal" selected>Teal</option>
+          <option value="default">Neutral</option>
+          <option value="amber">Amber</option>
+          <option value="blue">Blue</option>
+          <option value="rose">Rose</option>
+          <option value="violet">Violet</option>
+        </select>
+      </div>
+      <div class="setting-item toggle-item">
+        <label for="autoplayToggle">Autoplay next</label>
+        <input id="autoplayToggle" type="checkbox" checked />
+      </div>
+      <div class="setting-item toggle-item">
+        <label for="boostToggle">Volume boost (2x)</label>
+        <input id="boostToggle" type="checkbox" />
+      </div>
+    </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+    <div class="add-menu" id="addMenu" hidden></div>
+
+    <dialog id="helpDialog" class="help-dialog">
+      <div class="help-head">
+        <h2>Keyboard shortcuts</h2>
+        <button id="helpCloseBtn" class="icon-btn" type="button" aria-label="Close">
+          <svg aria-hidden="true"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <dl class="shortcut-list">
+        <div><dt><kbd>Space</kbd></dt><dd>Play / pause</dd></div>
+        <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek ±5 s (presets in visualizer)</dd></div>
+        <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Volume ±5%</dd></div>
+        <div><dt><kbd>N</kbd> / <kbd>P</kbd></dt><dd>Next / previous track</dd></div>
+        <div><dt><kbd>S</kbd></dt><dd>Shuffle</dd></div>
+        <div><dt><kbd>R</kbd></dt><dd>Repeat: off → all → one</dd></div>
+        <div><dt><kbd>V</kbd></dt><dd>Toggle full-screen visualizer</dd></div>
+        <div><dt><kbd>M</kbd></dt><dd>Mute / unmute</dd></div>
+        <div><dt><kbd>/</kbd></dt><dd>Focus search</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>Show this dialog</dd></div>
+      </dl>
+      <p class="help-note">
+        MP3, AAC/M4A, FLAC, OGG (Vorbis/Opus) and WAV play through your browser's native
+        audio element wired into a Web Audio analyser for the visualizations.
+      </p>
+    </dialog>
+
+    <template id="trackRowTemplate">
+      <div class="track-row" role="listitem">
+        <div class="row-slot">
+          <span class="row-idx"></span>
+          <button class="row-play" type="button" aria-label="Play">
+            <svg aria-hidden="true" class="ico-play"><use href="#i-play" /></svg>
+            <svg aria-hidden="true" class="ico-pause"><use href="#i-pause" /></svg>
+          </button>
+          <div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="row-info">
+          <button class="row-title" type="button"></button>
+          <button class="row-artist" type="button"></button>
+        </div>
+        <div class="row-slot right">
+          <button class="row-menu" type="button" aria-label="More options" title="More options">
+            <svg aria-hidden="true"><use href="#i-plus" /></svg>
+          </button>
+          <span class="row-dur"></span>
+        </div>
+      </div>
+    </template>
+
+    <template id="albumCardTemplate">
+      <button class="album-card" type="button">
+        <div class="album-art-wrap">
+          <img class="album-art" alt="" loading="lazy" />
+          <span class="album-playbadge"><svg aria-hidden="true"><use href="#i-play" /></svg></span>
+        </div>
+        <p class="album-name"></p>
+        <p class="album-artist"></p>
+      </button>
+    </template>
+
+    <input id="folderInput" class="sr-only" type="file" webkitdirectory directory multiple />
+    <script src="./metadata-reader.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
