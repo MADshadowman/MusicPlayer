@@ -56,6 +56,9 @@
       <div class="nav-brand">
         <svg aria-hidden="true" class="nav-logo"><use href="#i-viz" /></svg>
         <span class="nav-name">MusicPlayer</span>
+        <button id="navToggle" class="nav-toggle" type="button" title="Toggle sidebar" aria-label="Toggle sidebar">
+          <svg aria-hidden="true"><use href="#i-collapse" /></svg>
+        </button>
       </div>
       <button class="nav-item" type="button" data-nav="home" role="tab" aria-selected="true">
         <svg aria-hidden="true"><use href="#i-home" /></svg><span>Home</span>
@@ -94,25 +97,12 @@
     <!-- Main content -->
     <main class="content" id="content">
       <header class="content-head">
-        <button id="navToggle" class="ghost-round nav-collapse" type="button" title="Toggle sidebar">
-          <svg aria-hidden="true"><use href="#i-collapse" /></svg>
-        </button>
         <label class="search-wrap" for="searchInput">
           <svg class="search-icon" aria-hidden="true"><use href="#i-search" /></svg>
           <span class="sr-only">Search</span>
           <input id="searchInput" type="search" placeholder="Search your library..." autocomplete="off" />
         </label>
         <span id="resultCount" class="sr-only"></span>
-        <label class="sort-wrap" for="sortSelect">
-          <select id="sortSelect" title="Sort order">
-            <option value="title-asc" selected>Sort: Title A→Z</option>
-            <option value="title-desc">Sort: Title Z→A</option>
-            <option value="artist-asc">Sort: Artist</option>
-            <option value="duration-asc">Sort: Shortest</option>
-            <option value="duration-desc">Sort: Longest</option>
-            <option value="date-desc">Sort: Newest</option>
-          </select>
-        </label>
       </header>
       <div id="view" class="view"></div>
     </main>
@@ -133,7 +123,7 @@
       </div>
       <div class="pb-center">
         <div class="pb-controls">
-          <button id="shuffleBtn" class="pb-ctl sm" type="button" title="Shuffle (S)" aria-label="Shuffle">
+          <button id="shuffleBtn" class="pb-ctl sm" type="button" title="Shuffle mode (S)" aria-label="Shuffle mode">
             <svg aria-hidden="true"><use href="#i-shuffle" /></svg>
           </button>
           <button id="prevBtn" class="pb-ctl" type="button" title="Previous (P)" aria-label="Previous track">
@@ -149,6 +139,9 @@
           <button id="repeatBtn" class="pb-ctl sm" type="button" title="Repeat (R)" aria-label="Repeat">
             <svg aria-hidden="true" class="icon-repeat"><use href="#i-repeat" /></svg>
             <svg aria-hidden="true" class="icon-repeat-one"><use href="#i-repeat-one" /></svg>
+          </button>
+          <button id="vizOpenSmBtn" class="pb-ctl sm viz-mobile-fab" type="button" title="Visualizer (V)" aria-label="Visualizer">
+            <svg aria-hidden="true"><use href="#i-viz" /></svg>
           </button>
         </div>
         <div class="pb-seek">
@@ -174,53 +167,116 @@
     <!-- Immersive visualizer overlay -->
     <div class="viz-layer" id="vizLayer" hidden>
       <canvas id="vizCanvas"></canvas>
+      <canvas id="vizGlCanvas" hidden></canvas>
       <button id="vizCloseBtn" class="viz-close" type="button" title="Close visualizer (Esc)" aria-label="Close visualizer">
         <svg aria-hidden="true"><use href="#i-close" /></svg>
       </button>
+      <div class="viz-info" id="vizInfo">
+        <span class="viz-track" id="vizTrackTitle">No track selected</span>
+        <span class="viz-artist" id="vizTrackArtist"></span>
+      </div>
       <div class="viz-hud" id="vizHud">
         <button class="viz-hud-arrow" id="vizPrevPreset" type="button" aria-label="Previous visualizer">‹</button>
         <div class="viz-hud-mid">
-          <span id="vizName" class="viz-name">Spectrum</span>
+          <span id="vizName" class="viz-name">Aurora</span>
           <div id="vizDots" class="viz-dots"></div>
         </div>
         <button class="viz-hud-arrow" id="vizNextPreset" type="button" aria-label="Next visualizer">›</button>
+        <button id="vizStyleBtn" class="viz-cyc" type="button" title="Styles" aria-label="Open style menu">
+          <svg aria-hidden="true"><use href="#i-queue" /></svg>
+        </button>
+        <button id="vizAutoCycle" class="viz-cyc" type="button" title="Auto-cycle MilkDrop presets" aria-label="Toggle auto-cycle">
+          <svg aria-hidden="true"><use href="#i-reload" /></svg>
+        </button>
+      </div>
+      <div class="viz-style-menu" id="vizStyleMenu" hidden>
+        <div class="vsm-head">
+          <span>Styles</span>
+          <button id="vizStyleClose" class="icon-btn" type="button" aria-label="Close style menu">
+            <svg aria-hidden="true"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="vsm-list" id="vizStyleList"></div>
+        <div class="vsm-react">
+          <span>Reaction</span>
+          <input id="vizReact" type="range" min="5" max="100" step="1" value="45" />
+        </div>
+      </div>
+      <div class="viz-transport" id="vizTransport">
+        <button id="vizPrevBtn" class="viz-ctl" type="button" title="Previous (P)" aria-label="Previous track">
+          <svg aria-hidden="true"><use href="#i-prev" /></svg>
+        </button>
+        <button id="vizPlayPauseBtn" class="viz-ctl play" type="button" title="Play/Pause (Space)" aria-label="Play or pause">
+          <svg aria-hidden="true" class="icon-play"><use href="#i-play" /></svg>
+          <svg aria-hidden="true" class="icon-pause"><use href="#i-pause" /></svg>
+        </button>
+        <button id="vizNextBtn" class="viz-ctl" type="button" title="Next (N)" aria-label="Next track">
+          <svg aria-hidden="true"><use href="#i-next" /></svg>
+        </button>
+        <span id="vizCurTime" class="viz-time">0:00</span>
+        <input id="vizSeekSlider" class="viz-slider" type="range" min="0" max="1000" value="0" step="1" aria-label="Seek" />
+        <span id="vizTotTime" class="viz-time">0:00</span>
       </div>
     </div>
 
-    <!-- Settings panel -->
-    <div class="settings-panel" id="settingsPanel" hidden>
-      <div class="setting-item">
-        <label for="vizPresetSelect">Default visualizer</label>
-        <select id="vizPresetSelect"></select>
+    <!-- Settings dialog -->
+    <dialog id="settingsDialog" class="help-dialog settings-dialog">
+      <div class="help-head">
+        <h2>Settings</h2>
+        <button id="settingsCloseBtn" class="icon-btn" type="button" aria-label="Close">
+          <svg aria-hidden="true"><use href="#i-close" /></svg>
+        </button>
       </div>
-      <div class="setting-item">
-        <label for="themeSelect">Theme</label>
-        <select id="themeSelect">
-          <option value="auto">Auto (system)</option>
-          <option value="dark" selected>Dark</option>
-          <option value="light">Light</option>
-        </select>
+      <div class="settings-body">
+        <div class="setting-item">
+          <label for="vizPresetSelect">Default visualizer</label>
+          <select id="vizPresetSelect"></select>
+        </div>
+        <div class="setting-item">
+          <label for="themeSelect">Theme</label>
+          <select id="themeSelect">
+            <option value="auto">Auto (system)</option>
+            <option value="dark" selected>Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="accentSelect">Accent</label>
+          <select id="accentSelect">
+            <option value="teal" selected>Teal</option>
+            <option value="default">Neutral</option>
+            <option value="amber">Amber</option>
+            <option value="blue">Blue</option>
+            <option value="rose">Rose</option>
+            <option value="violet">Violet</option>
+          </select>
+        </div>
+        <div class="setting-item toggle-item">
+          <label for="autoplayToggle">Autoplay next</label>
+          <input id="autoplayToggle" type="checkbox" checked />
+        </div>
+        <div class="setting-item toggle-item">
+          <label for="boostToggle">Volume boost (2x)</label>
+          <input id="boostToggle" type="checkbox" />
+        </div>
       </div>
-      <div class="setting-item">
-        <label for="accentSelect">Accent</label>
-        <select id="accentSelect">
-          <option value="teal" selected>Teal</option>
-          <option value="default">Neutral</option>
-          <option value="amber">Amber</option>
-          <option value="blue">Blue</option>
-          <option value="rose">Rose</option>
-          <option value="violet">Violet</option>
-        </select>
-      </div>
-      <div class="setting-item toggle-item">
-        <label for="autoplayToggle">Autoplay next</label>
-        <input id="autoplayToggle" type="checkbox" checked />
-      </div>
-      <div class="setting-item toggle-item">
-        <label for="boostToggle">Volume boost (2x)</label>
-        <input id="boostToggle" type="checkbox" />
-      </div>
-    </div>
+    </dialog>
+
+    <dialog id="newPlaylistDialog" class="help-dialog prompt-dialog">
+      <form method="dialog" id="newPlaylistForm">
+        <div class="help-head">
+          <h2>New playlist</h2>
+          <button id="newPlaylistCancel" class="icon-btn" type="button" aria-label="Cancel">
+            <svg aria-hidden="true"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <input id="newPlaylistName" type="text" placeholder="Playlist name" maxlength="80" autocomplete="off" required />
+        <div class="prompt-actions">
+          <button type="button" class="prompt-btn ghost" id="newPlaylistCancel2">Cancel</button>
+          <button type="submit" class="prompt-btn primary">Create</button>
+        </div>
+      </form>
+    </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
     <div class="add-menu" id="addMenu" hidden></div>
@@ -253,12 +309,11 @@
     <template id="trackRowTemplate">
       <div class="track-row" role="listitem">
         <div class="row-slot">
-          <span class="row-idx"></span>
-          <button class="row-play" type="button" aria-label="Play">
+          <button class="row-play" type="button" aria-label="Play or pause">
             <svg aria-hidden="true" class="ico-play"><use href="#i-play" /></svg>
             <svg aria-hidden="true" class="ico-pause"><use href="#i-pause" /></svg>
           </button>
-          <div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <span class="row-idx"></span>
         </div>
         <div class="row-info">
           <button class="row-title" type="button"></button>
