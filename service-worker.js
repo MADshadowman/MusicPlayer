@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "v2";
+const VERSION = "v4";
 const SHELL_CACHE = `mp-shell-${VERSION}`;
 const RUNTIME_CACHE = `mp-runtime-${VERSION}`;
 const AUDIO_CACHE = `mp-audio-${VERSION}`;
@@ -157,10 +157,11 @@ self.addEventListener("fetch", (event) => {
 
   if (url.origin !== self.location.origin) return;
 
-  // app shell & local assets
+  // app shell & local assets: network-first so code updates land immediately;
+  // the precache only serves as an offline fallback
   if (request.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith(".html")) {
     event.respondWith(networkFirst(request, SHELL_CACHE));
     return;
   }
-  event.respondWith(cacheFirst(request, SHELL_CACHE));
+  event.respondWith(networkFirst(request, SHELL_CACHE));
 });

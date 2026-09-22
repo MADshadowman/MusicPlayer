@@ -1335,7 +1335,6 @@ body[data-playing="true"] .track-row.active .row-play .ico-pause {
 
 .pb-ctl:hover {
   color: var(--text);
-  transform: scale(1.08);
 }
 
 .pb-ctl[data-active="true"] {
@@ -2190,6 +2189,10 @@ body[data-playing="true"] .track-row.active .row-play .ico-pause {
   padding: 0.5rem 0.15rem;
 }
 
+.settings-dialog .setting-item[hidden] {
+  display: none;
+}
+
 .settings-dialog label {
   font-size: 0.85rem;
   font-weight: 500;
@@ -2980,4 +2983,147 @@ body.nav-collapsed .nav-playlist-item {
   width: 14px;
   height: 14px;
   fill: currentColor;
+}
+
+/* ---------- Radio ---------- */
+
+.radio-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.2rem 0 1.1rem;
+}
+
+.tag-chip {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text-soft);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.32rem 0.75rem;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+.tag-chip:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tag-chip[data-active="true"] {
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent);
+}
+
+.radio-row .row-idx svg {
+  width: 15px;
+  height: 15px;
+  fill: var(--muted);
+}
+
+.radio-row.active .row-idx svg {
+  fill: var(--accent);
+}
+
+.radio-row .radio-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-fav {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.track-row:hover .row-fav,
+.row-fav .fav-star.on {
+  opacity: 1;
+}
+
+.row-fav:hover {
+  color: var(--text);
+}
+
+.row-fav .fav-star.on {
+  color: var(--accent);
+}
+
+@media (hover: none) {
+  .row-fav {
+    opacity: 1;
+  }
+}
+
+.radio-nowplaying {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 1rem;
+}
+
+.radio-np-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.radio-np-sub {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.add-menu button[data-danger="true"] {
+  color: #ff6b6b;
+}
+
+/* ---------- Equalizer ---------- */
+
+.eq-bands {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.35rem 0.1rem 0.5rem;
+  overflow-x: auto;
+}
+
+.eq-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.eq-band input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 104px;
+  appearance: slider-vertical;
+  accent-color: var(--accent);
+}
+
+.eq-freq {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.eq-item {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 0.7rem;
+  margin-top: 0.35rem;
 }
