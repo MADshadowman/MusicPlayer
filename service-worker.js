@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "v4";
+const VERSION = "v11";
 const SHELL_CACHE = `mp-shell-${VERSION}`;
 const RUNTIME_CACHE = `mp-runtime-${VERSION}`;
 const AUDIO_CACHE = `mp-audio-${VERSION}`;
@@ -17,6 +17,10 @@ const SHELL_PRECACHE = [
   "./icons/icon-512.png",
   "./icons/icon-512-maskable.png",
 ];
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "skip-waiting") self.skipWaiting();
+});
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

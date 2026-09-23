@@ -110,9 +110,9 @@ const BUTTERCHURN_EXTRA_LIBS = [
 
 const SORT_OPTIONS = [
   { value: "default", label: "Natural order" },
-  { value: "title-asc", label: "Title A?Z" },
-  { value: "title-desc", label: "Title Z?A" },
-  { value: "artist-asc", label: "Artist" },
+  { value: "title-asc", label: "Title A→Z" },
+  { value: "title-desc", label: "Title Z→A" },
+  { value: "artist-asc", label: "Artist A→Z" },
   { value: "duration-asc", label: "Shortest" },
   { value: "duration-desc", label: "Longest" },
   { value: "date-desc", label: "Newest" },
@@ -323,8 +323,29 @@ bootstrap();
    Bootstrap & preferences
    ============================================================ */
 
-function bootstrap() {
+async function hardUpdateIfNeeded() {
+  if (!new URLSearchParams(location.search).get("hardupdate")) return;
   try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+    }
+    localStorage.removeItem(RADIO_CACHE_KEY);
+    const clean = location.pathname + location.hash;
+    location.replace(clean);
+  } catch {
+    // best effort
+  }
+}
+
+async function bootstrap() {
+  try {
+    await hardUpdateIfNeeded();
+    console.log(`[musicplayer] app build v29`);
     createAudioElement();
     bindEvents();
     hydratePreferences();
@@ -345,7 +366,18 @@ function bootstrap() {
 function initServiceWorker() {
   if (!("serviceWorker" in navigator) || window.location.protocol === "file:") return;
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch((error) => {
+    let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloading || !navigator.serviceWorker.controller) return;
+      reloading = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register("./service-worker.js?v=5").then((reg) => {
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        reg.waiting.postMessage({ type: "skip-waiting" });
+      }
+      reg.update().catch(() => {});
+    }).catch((error) => {
       console.warn("service worker registration failed", error);
     });
   });
@@ -764,7 +796,7 @@ function goToTrackAlbum() {
   if (album) {
     goToView("album", album.id);
   } else {
-    showToast("This track has no album � showing singles");
+    showToast("This track has no album — showing singles");
     state.searchTerm = "";
     refs.searchInput.value = "";
     goToView("albums");
@@ -910,7 +942,7 @@ const BANDS = [
   { name: "air", lo: 8000, hi: 16000 },
 ];
 
-/* time constants (seconds) � per-band attack/release smoothing */
+/* time constants (seconds) — per-band attack/release smoothing */
 const BAND_ENV = [
   { attack: 0.05, release: 0.22 },
   { attack: 0.05, release: 0.25 },
@@ -1069,7 +1101,7 @@ function abortGapless() {
 
 function maybeArmGapless() {
   if (state.crossfade || crossfadeState) return;
-  /* radio streams are continuous � never arm gapless there */
+  /* radio streams are continuous — never arm gapless there */
   if (state.radioStation) return;
   if (gaplessState) return;
   if (state.repeat === "one" || !state.autoplayNext) return;
@@ -1706,7 +1738,10 @@ function syncPlaybackUI() {
 
 function updateActiveRow() {
   for (const row of refs.view.querySelectorAll(".track-row")) {
-    row.classList.toggle("active", row.dataset.trackId === state.nowPlayingId);
+    row.classList.toggle("active", row.dataset.trackId === state.nowPlayingId && Boolean(state.nowPlayingId));
+  }
+  for (const row of refs.view.querySelectorAll(".radio-row")) {
+    row.classList.toggle("active", row.dataset.stationId === state.radioStation?.uuid);
   }
 }
 
@@ -2422,7 +2457,17 @@ function renderQueueView() {
       right.appendChild(buildNode("span", "row-dur", track.duration ? formatTime(track.duration) : "--:--"));
     }
 
-    row.addEventListener("click", () => {
+  const playBtn = row.querySelector(".row-play");
+  playBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (state.radioStation?.uuid !== station.uuid) {
+      playStation(station);
+      return;
+    }
+    if (playerState.paused) playCurrent();
+    else pauseCurrent();
+  });
+  row.addEventListener("click", () => {
       if (pos !== state.queuePos) playQueueIndex(pos, { autoplay: true });
     });
     list.appendChild(row);
@@ -2798,7 +2843,10 @@ async function fetchRadioStations(tag) {
     reverse: "true",
     limit: "150",
   });
-  if (tag) params.set("tagname", tag);
+  if (tag) {
+    params.set("tagList", tag);
+    params.set("tagname", tag);
+  }
   let lastError = null;
   for (const base of RADIO_API_MIRRORS) {
     try {
@@ -2858,7 +2906,7 @@ function ensureRadioStations() {
         try {
           localStorage.setItem(RADIO_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), tag: radioState.tag, stations }));
         } catch {
-          // storage full � keep going
+          // storage full — keep going
         }
       }
       apply(stations);
@@ -2866,9 +2914,9 @@ function ensureRadioStations() {
     .catch(() => {
       radioState.loading = false;
       radioState.loadingFailed = true;
-      if (cached && Array.isArray(cached.stations)) {
+      if (cached && Array.isArray(cached.stations) && cached.tag === radioState.tag) {
         apply(cached.stations);
-        showToast("Radio directory offline � using cached stations");
+        showToast("Radio directory offline — using cached stations");
       } else {
         radioState.loaded = true;
         if (state.view === "radio") renderView();
@@ -2877,6 +2925,7 @@ function ensureRadioStations() {
 }
 
 function matchRadioFilter(station) {
+  if (radioState.tag && !` ${station.tags}`.toLowerCase().replace(/,\s*/g, " ").includes(` ${radioState.tag}`)) return false;
   const term = state.searchTerm.toLowerCase().trim();
   if (!term) return true;
   return [station.name, station.tags, station.country].join(" ").toLowerCase().includes(term);
@@ -2886,21 +2935,27 @@ function radioStationSubtitle(station) {
   const parts = [];
   if (station.country) parts.push(station.country);
   if (station.tags) parts.push(station.tags);
-  return parts.join(" � ") || "Internet radio";
+  return parts.join(" — ") || "Internet radio";
 }
 
 function radioMetaLabel(station) {
   const bits = [];
   if (station.codec) bits.push(station.codec.split("/")[0].toUpperCase());
   if (station.bitrate) bits.push(`${station.bitrate} kbps`);
-  return bits.join(" � ");
+  return bits.join(" — ");
 }
 
 function buildRadioRow(station) {
   const row = buildNode("div", "track-row radio-row");
   row.dataset.stationId = station.uuid;
   row.innerHTML = `
-    <div class="row-slot"><span class="row-idx"><svg aria-hidden="true"><use href="#i-radio" /></svg></span></div>
+    <div class="row-slot">
+      <button class="row-play" type="button" aria-label="Play or pause">
+        <svg aria-hidden="true" class="ico-play"><use href="#i-play" /></svg>
+        <svg aria-hidden="true" class="ico-pause"><use href="#i-pause" /></svg>
+      </button>
+      <span class="row-idx"><svg aria-hidden="true"><use href="#i-radio" /></svg></span>
+    </div>
     <div class="row-info">
       <span class="row-title"></span>
       <span class="row-artist radio-sub"></span>
@@ -2941,7 +2996,7 @@ function renderRadioFavButton(star, uuid) {
 
 function radioTitleLine() {
   const count = radioState.visible.length;
-  if (!radioState.loaded) return "Loading stations�";
+  if (!radioState.loaded) return "Loading stations…";
   if (count) return `${count} station${count === 1 ? "" : "s"}`;
   return "No stations";
 }
@@ -2979,7 +3034,7 @@ function renderRadioView() {
   fragment.appendChild(tags);
 
   if (radioState.loading) {
-    fragment.appendChild(buildNode("div", "view-empty", "Loading stations�"));
+    fragment.appendChild(buildNode("div", "view-empty", "Loading stations…"));
   } else if (!radioState.stations.length) {
     const empty = radioState.loadingFailed
       ? buildNode("div", "view-empty", "Could not reach the radio directory. Check your connection, then click the All chip to retry.")
@@ -3097,7 +3152,7 @@ function radioErrorPath() {
   if (!station) return;
   radioState.failCount += 1;
   if (radioState.failCount === 1) {
-    showToast(`"${station.name}" failed to start � retrying`);
+    showToast(`"${station.name}" failed to start — retrying`);
     /* one automatic retry, preferring the station's alternate URL if it exists */
     const el = audioEls.radio;
     const alt = station.alt && el.src !== station.alt ? station.alt : station.url;
@@ -3111,7 +3166,7 @@ function radioErrorPath() {
   }
   const next = nextRadioStationAfterFailure();
   if (next) {
-    showToast(`"${station.name}" is down � trying "${next.name}"`);
+    showToast(`"${station.name}" is down — trying "${next.name}"`);
     playStation(next);
   } else {
     showToast(`"${station.name}" is unreachable`);
@@ -3987,7 +4042,7 @@ function renderVizStyleMenu() {
     item.innerHTML = `<span class="vsm-name">${mode.name}</span><span class="vsm-sub"></span>`;
     if (mode.key === "butterchurn") {
       item.querySelector(".vsm-sub").textContent =
-        bc.ready ? `${bc.presetNames.length} presets` : "loading�";
+        bc.ready ? `${bc.presetNames.length} presets` : "loading…";
     } else {
       item.querySelector(".vsm-sub").textContent = "";
     }
@@ -4009,7 +4064,7 @@ function renderVizStyleMenu() {
       const search = document.createElement("input");
       search.type = "search";
       search.className = "vsm-search";
-      search.placeholder = "Filter presets�";
+      search.placeholder = "Filter presets…";
       const refreshFilter = () => {
         const q = search.value.trim().toLowerCase();
         for (const row of presets.querySelectorAll(".vsm-preset-row")) {
@@ -4483,7 +4538,7 @@ function ensureButterchurn() {
     })
     .catch((error) => {
       console.warn("butterchurn load failed", error);
-      showToast("MilkDrop could not load � using built-in visuals");
+      showToast("MilkDrop could not load — using built-in visuals");
       bc.ready = false;
       state.vizIndex = VIZ_MODES.findIndex((m) => m.key === "nebula");
       renderVizHud();
@@ -4553,7 +4608,7 @@ async function loadFullBcCatalog() {
       }
       bc.catalogLoaded = true;
       rebuildBcPresetList();
-      showToast(`Full MilkDrop catalog loaded � ${added} more presets`);
+      showToast(`Full MilkDrop catalog loaded — ${added} more presets`);
       renderVizStyleMenu();
       renderVizHud();
       return added;
@@ -4808,7 +4863,7 @@ function drawAurora(ctx, w, h, dt) {
 
   const layers = 4;
   for (let layer = 0; layer < layers; layer++) {
-    // amplitude follows the *slow* bass copy � smooth swells, no twitch
+    // amplitude follows the *slow* bass copy — smooth swells, no twitch
     const amp =
       h * (0.13 + layer * 0.045) *
       (0.35 + clamp(features.bassSlow * 1.7, 0, 1.5) + features.pulse * 0.18);
@@ -4869,7 +4924,7 @@ function auroraStars(ctx, w, h, dt) {
 }
 
 /* ------------------------------------------------------------
-   Mode: Nebula (orbit field � never collapses, always alive)
+   Mode: Nebula (orbit field — never collapses, always alive)
    ------------------------------------------------------------ */
 
 const nebulaParts = [];
@@ -4901,7 +4956,7 @@ function drawNebula(ctx, w, h, dt) {
   ctx.globalCompositeOperation = "lighter";
   const glow = ensureGlow(colors);
   for (const p of nebulaParts) {
-    // inner orbits track bass, outer orbits track highs � clearly visible cause
+    // inner orbits track bass, outer orbits track highs — clearly visible cause
     const speedR = 0.55 + (p.orbitR < 0.26 ? features.bass : features.high) * 1.5;
     p.angle += p.speed * p.dir * speedR * react * dt;
     p.wobble += dt * (0.3 + features.mid * 0.8) * react;
@@ -4964,7 +5019,7 @@ function drawTunnel(ctx, w, h, dt) {
   const coreS = 55 + features.bassSlow * 130 + features.beat * 40;
   ctx.globalAlpha = 0.3 + features.bassSlow * 0.3;
   ctx.drawImage(glow, cx - coreS / 2, cy - coreS / 2, coreS, coreS);
-  // grid pulse: the metronome tick � a bright flash spread across the core ring
+  // grid pulse: the metronome tick — a bright flash spread across the core ring
   if (features.pulse > 0.12) {
     const ps = coreS * (1 + (1 - features.pulse) * 3.4);
     ctx.globalAlpha = clamp(features.pulse * 0.55, 0, 0.85);

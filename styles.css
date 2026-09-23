@@ -3025,7 +3025,7 @@ body.nav-collapsed .nav-playlist-item {
 }
 
 .radio-row.active .row-idx svg {
-  fill: var(--accent);
+  display: none;
 }
 
 .radio-row .radio-sub {

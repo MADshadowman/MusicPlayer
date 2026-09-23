@@ -137,7 +137,7 @@ const MetadataReader = (function () {
             break;
         }
       } catch {
-        // malformed frame â€” skip
+        // malformed frame — skip
       }
       pos = dataEnd;
     }
