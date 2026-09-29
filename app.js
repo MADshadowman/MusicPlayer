@@ -132,6 +132,8 @@ const RADIO_TAGS = [
 const RADIO_CACHE_KEY = "mp_radio_cache";
 const RADIO_FAVS_KEY = "mp_radio_favs";
 const RADIO_CACHE_TTL = 2 * 24 * 3600 * 1000;
+const DURATION_CACHE_KEY = "mp_duration_cache";
+const DURATION_CACHE_MAX_ENTRIES = 600;
 
 /* equalizer: 10-band peaking chain */
 const EQ_BANDS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -160,6 +162,8 @@ const state = {
   shuffle: false,
   repeat: "off",
   autoplayNext: true,
+  shuffleDeck: [],
+  shuffleCursor: 0,
   boostEnabled: false,
   wakeLockEnabled: false,
   crossfade: false,
@@ -168,6 +172,8 @@ const state = {
   recent: [],
   volume: 1,
   muted: false,
+  playbackRate: 1,
+  sleepTimerMin: 0,
   theme: "dark",
   accent: "teal",
   vizIndex: 0,
@@ -261,6 +267,8 @@ const refs = {
   eqPanelItem: document.getElementById("eqPanelItem"),
   eqBandsItem: document.getElementById("eqBandsItem"),
   eqBandsWrap: document.getElementById("eqBands"),
+  playbackRateSelect: document.getElementById("playbackRateSelect"),
+  sleepTimerSelect: document.getElementById("sleepTimerSelect"),
 };
 
 const playerState = {
@@ -278,7 +286,7 @@ function otherAudio(el) {
 }
 function isActiveAudio(el) {
   const active = activeAudio || audioEls.a;
-  return active && (el === active || el === undefined);
+  return Boolean(active) && el === active;
 }
 Object.defineProperty(refs, "audio", {
   configurable: true,
@@ -310,11 +318,18 @@ const features = {
 let lastFeatureTime = 0;
 let crossfadeState = null;
 let gaplessState = null;
+let sleepTimerId = 0;
+let sleepDeadline = 0;
+let shuffleDeckQueueLen = 0;
 let wakeLockSentinel = null;
 let vizRAF = 0;
 let menuAnchor = null;
 let lastPositionStateWrite = 0;
 let renderTimer = 0;
+let trackListChunkToken = 0;
+const CHUNKED_LIST_THRESHOLD = 300;
+const CHUNKED_LIST_SIZE = 200;
+let swUpdateToastShown = false;
 const artCache = new Map();
 
 bootstrap();
@@ -345,7 +360,7 @@ async function hardUpdateIfNeeded() {
 async function bootstrap() {
   try {
     await hardUpdateIfNeeded();
-    console.log(`[musicplayer] app build v29`);
+    console.log(`[musicplayer] app build v31`);
     createAudioElement();
     bindEvents();
     hydratePreferences();
@@ -373,8 +388,9 @@ function initServiceWorker() {
       location.reload();
     });
     navigator.serviceWorker.register("./service-worker.js?v=5").then((reg) => {
-      if (reg.waiting && navigator.serviceWorker.controller) {
-        reg.waiting.postMessage({ type: "skip-waiting" });
+      if (reg.waiting && navigator.serviceWorker.controller && !swUpdateToastShown) {
+        swUpdateToastShown = true;
+        showToast("New version available — reload to update");
       }
       reg.update().catch(() => {});
     }).catch((error) => {
@@ -425,6 +441,7 @@ function createAudioElement() {
 function onAudioLoadedMetadata(event) {
   if (!isActiveAudio(event.target)) return;
   playerState.duration = Number.isFinite(refs.audio.duration) ? refs.audio.duration : 0;
+  applyPlaybackRate();
   syncPlaybackUI();
 }
 
@@ -469,11 +486,8 @@ function onAudioEnded(event) {
 
 function onAudioError(event) {
   if (!isActiveAudio(event.target)) return;
+  if (state.radioStation) return;
   const error = event.target?.error;
-  if (state.radioStation) {
-    radioErrorPath();
-    return;
-  }
   if (error && error.code !== MediaError.MEDIA_ERR_ABORTED) {
     showToast(`Audio error: ${error.message || "unknown"}`);
   }
@@ -533,6 +547,14 @@ function hydratePreferences() {
   refs.volumeSlider.value = String(state.volume);
   refreshVolumeControls();
   refreshTransportControls();
+
+  const savedRate = Number(localStorage.getItem("mp_rate") || "1");
+  state.playbackRate = Number.isFinite(savedRate) ? clamp(savedRate, 0.25, 3) : 1;
+  if (refs.playbackRateSelect) refs.playbackRateSelect.value = String(state.playbackRate);
+  applyPlaybackRate();
+  const savedSleepMin = Number(localStorage.getItem("mp_sleep_min") || "0");
+  state.sleepTimerMin = Number.isFinite(savedSleepMin) ? Math.max(0, savedSleepMin) : 0;
+  if (refs.sleepTimerSelect) refs.sleepTimerSelect.value = String(state.sleepTimerMin);
 
   state.liked = loadLiked();
   state.recent = loadRecent();
@@ -917,9 +939,8 @@ function ensureAudioGraph() {
     boostGain.connect(audioContext.destination);
     applyBoost();
     applyVolume();
-    applyBoost();
-    applyVolume();
     applyEq();
+    applyPlaybackRate();
     if (bc.fedGain) analyser.connect(bc.fedGain);
     featureState = {
       bandTargets: new Float32Array(BANDS.length),
@@ -966,6 +987,18 @@ function applyVolume() {
   if (radio) {
     radio.volume = clamp(level, 0, 1);
     radio.muted = state.muted;
+  }
+}
+
+function applyPlaybackRate() {
+  const rate = clamp(Number(state.playbackRate) || 1, 0.25, 3);
+  for (const el of [audioEls.a, audioEls.b, audioEls.radio]) {
+    if (!el) continue;
+    try {
+      el.playbackRate = rate;
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -1030,6 +1063,40 @@ function saveEqPref() {
   }
 }
 
+function loadDurationCache() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DURATION_CACHE_KEY) || "null");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // fall through
+  }
+  return {};
+}
+
+function saveDurationCacheEntry(key, seconds) {
+  const cache = loadDurationCache();
+  cache[key] = seconds;
+  const keys = Object.keys(cache);
+  if (keys.length > DURATION_CACHE_MAX_ENTRIES) {
+    for (const stale of keys.slice(0, keys.length - DURATION_CACHE_MAX_ENTRIES)) {
+      delete cache[stale];
+    }
+  }
+  try {
+    localStorage.setItem(DURATION_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // storage full etc
+  }
+}
+
+function durationCacheKeyFor(track) {
+  if (track.localFile) {
+    const file = track.localFile;
+    return `${file.name}|${file.size}|${file.lastModified}`;
+  }
+  return `${track.src}|${track.sizeBytes || 0}`;
+}
+
 function buildEqPreferencesUI() {
   refs.eqPresetSelect.innerHTML =
     Object.keys(EQ_PRESETS)
@@ -1049,12 +1116,14 @@ function buildEqPreferencesUI() {
     slide.step = "1";
     slide.value = String(state.eqGains[index] || 0);
     slide.setAttribute("aria-label", `${hz} Hz gain`);
+    syncRangeFill(slide);
     slide.addEventListener("input", () => {
       state.eqGains[index] = Number(slide.value);
       state.eqPreset = matchEqPresetName(state.eqGains);
       refs.eqPresetSelect.value = state.eqPreset;
       saveEqPref();
       applyEq();
+      syncRangeFill(slide);
     });
     const label = buildNode("span", "eq-freq", EQ_FREQUENCIES[index]);
     band.append(slide, label);
@@ -1072,6 +1141,7 @@ function refreshEqPanelState() {
 function syncEqSliders() {
   refs.eqBandsWrap.querySelectorAll("input[type='range']").forEach((slide, index) => {
     slide.value = String(state.eqGains[index] || 0);
+    syncRangeFill(slide);
   });
 }
 
@@ -1084,9 +1154,11 @@ function elementGainFor(el) {
 
 function playableUrlFor(track) {
   if (track.localFile) {
-    const url = URL.createObjectURL(track.localFile);
-    trackLocalObjectUrl(url);
-    return url;
+    if (!track._objectUrl) {
+      track._objectUrl = URL.createObjectURL(track.localFile);
+      trackLocalObjectUrl(track._objectUrl);
+    }
+    return track._objectUrl;
   }
   return track.src;
 }
@@ -1119,10 +1191,21 @@ function maybeArmGapless() {
   gaplessState = { fromEl: refs.audio, toEl, pos: nextPos, entry, track, at: Date.now() };
   const prevLevel = toEl.preload;
   toEl.preload = "auto";
-  if (toEl.src !== track.src) {
+  applyPlaybackRate();
+  if (track.src && !track.src.startsWith("blob:")) {
+    let resolved;
+    try {
+      resolved = new URL(track.src, window.location.href).href;
+    } catch {
+      resolved = track.src;
+    }
+    if (toEl.src !== resolved) {
+      toEl.src = playableUrlFor(track);
+    } else if (prevLevel !== "auto") {
+      toEl.load();
+    }
+  } else {
     toEl.src = playableUrlFor(track);
-  } else if (prevLevel !== "auto") {
-    toEl.load();
   }
 }
 
@@ -1198,15 +1281,33 @@ function setElementGain(el, value) {
   g.gain.setValueAtTime(value, now);
 }
 
+function buildShuffleDeck() {
+  const positions = [];
+  for (let i = 0; i < state.queue.length; i++) positions.push(i);
+  state.shuffleDeck = fisherYates(positions);
+  const currentIdx = state.shuffleDeck.indexOf(state.queuePos);
+  if (currentIdx >= 0) state.shuffleDeck.splice(currentIdx, 1);
+  state.shuffleCursor = 0;
+  shuffleDeckQueueLen = state.queue.length;
+}
+
+function nextShuffledPos() {
+  if (!state.queue.length) return state.queuePos;
+  if (state.shuffleDeck.length !== state.queue.length - 1 || shuffleDeckQueueLen !== state.queue.length ||
+    state.shuffleCursor >= state.shuffleDeck.length) {
+    buildShuffleDeck();
+  }
+  if (!state.shuffleDeck.length) return state.queuePos;
+  return state.shuffleDeck[state.shuffleCursor++];
+}
+
 function peekNextPos() {
   if (state.queuePos < 0) return null;
   const atEnd = state.queuePos >= state.queue.length - 1;
   if (atEnd && state.repeat === "off" && !state.shuffle) return null;
   let nextPos;
   if (state.shuffle && state.queue.length > 1) {
-    do {
-      nextPos = Math.floor(Math.random() * state.queue.length);
-    } while (nextPos === state.queuePos);
+    nextPos = nextShuffledPos();
   } else {
     nextPos = state.queuePos >= state.queue.length - 1 ? 0 : state.queuePos + 1;
   }
@@ -1245,6 +1346,7 @@ async function startCrossfade(nextPos, fade) {
   recordPlay(entry.id);
   refreshNowPlayingUI(track);
   toEl.src = playableUrlFor(track);
+  applyPlaybackRate();
   saveSession(0);
   updateMediaSessionMetadata(track);
   renderNavPlaylists();
@@ -1318,6 +1420,7 @@ function ensureQueueFromIds(trackIds, startTrackId = null, contextId = "") {
   const ids = (trackIds || []).filter((id) => getTrack(id));
   if (!ids.length) return;
   state.queue = ids.map((id) => ({ id }));
+  state.shuffleDeck = [];
   const pos = startTrackId ? state.queue.findIndex((e) => e.id === startTrackId) : 0;
   state.queuePos = pos >= 0 ? pos : 0;
   state.playedHistory = [];
@@ -1357,6 +1460,7 @@ async function playQueueIndex(pos, options = {}) {
   refreshLikeButtons();
   refreshNowPlayingUI(track);
   refs.audio.src = playableUrlFor(track);
+  applyPlaybackRate();
   saveSession(0);
   updateMediaSessionMetadata(track);
   renderNavPlaylists();
@@ -1401,6 +1505,44 @@ function pauseCurrent() {
   refs.audio.pause();
 }
 
+function armSleepTimer() {
+  if (sleepTimerId) {
+    window.clearTimeout(sleepTimerId);
+    sleepTimerId = 0;
+  }
+  if (!(state.sleepTimerMin > 0)) return;
+  if (playerState.paused) return;
+  if (!sleepDeadline || sleepDeadline <= Date.now()) {
+    sleepDeadline = Date.now() + state.sleepTimerMin * 60000;
+  }
+  const remaining = sleepDeadline - Date.now();
+  if (remaining <= 0) {
+    pauseCurrent();
+    state.sleepTimerMin = 0;
+    try {
+      localStorage.setItem("mp_sleep_min", "0");
+    } catch {
+      // ignore
+    }
+    if (refs.sleepTimerSelect) refs.sleepTimerSelect.value = "0";
+    showToast("Sleep timer: paused playback");
+    return;
+  }
+  sleepTimerId = window.setTimeout(() => {
+    sleepTimerId = 0;
+    sleepDeadline = 0;
+    pauseCurrent();
+    state.sleepTimerMin = 0;
+    try {
+      localStorage.setItem("mp_sleep_min", "0");
+    } catch {
+      // ignore
+    }
+    if (refs.sleepTimerSelect) refs.sleepTimerSelect.value = "0";
+    showToast("Sleep timer: paused playback");
+  }, remaining);
+}
+
 function togglePlayback() {
   if (playerState.paused) playCurrent();
   else pauseCurrent();
@@ -1416,11 +1558,6 @@ function playNext() {
   }
   abortCrossfade();
   abortGapless();
-  if (state.repeat === "one" && state.queue.length) {
-    refs.audio.currentTime = 0;
-    playCurrent().catch(() => {});
-    return;
-  }
   const atEnd = state.queuePos >= state.queue.length - 1;
   if (atEnd && state.repeat === "off") {
     setPlaying(false);
@@ -1428,9 +1565,7 @@ function playNext() {
   }
   let nextPos;
   if (state.shuffle && state.queue.length > 1) {
-    do {
-      nextPos = Math.floor(Math.random() * state.queue.length);
-    } while (nextPos === state.queuePos);
+    nextPos = nextShuffledPos();
   } else {
     nextPos = atEnd ? 0 : state.queuePos + 1;
   }
@@ -1461,6 +1596,7 @@ function insertNextInQueue(trackId) {
   if (state.queuePos < 0) {
     state.queue = [{ id: trackId }];
     state.queuePos = 0;
+    state.shuffleDeck = [];
     return;
   }
   const atPos = state.queue.findIndex((e) => e.id === trackId);
@@ -1471,6 +1607,7 @@ function insertNextInQueue(trackId) {
     if (removedBefore) state.queuePos -= 1;
   }
   state.queue.splice(state.queuePos + 1, 0, { id: trackId });
+  state.shuffleDeck = [];
 }
 
 function pushHistory(pos) {
@@ -1573,7 +1710,7 @@ function stopPlayback(clearSaved = true) {
   state.nowPlayingId = null;
   refs.pbTitle.textContent = "No track selected";
   refs.pbArtist.textContent = "Load some music to begin";
-  refs.pbArt.innerHTML = "";
+  setPbArtArtwork("");
   refs.pbAddBtn.hidden = true;
   refs.pbLikeBtn.hidden = true;
   refreshLikeButtons();
@@ -1588,8 +1725,10 @@ function setPlaying(isPlaying) {
   for (const btn of document.querySelectorAll(".big-play-row")) {
     btn.dataset.state = isPlaying ? "playing" : "paused";
   }
-  if (isPlaying) startVizLoop();
-  else if (!state.vizOpen) stopVizLoop();
+  if (isPlaying) {
+    startVizLoop();
+    armSleepTimer();
+  } else if (!state.vizOpen) stopVizLoop();
   syncWakeLock();
   syncMediaSessionState();
 }
@@ -1692,6 +1831,7 @@ function restoreSession() {
   refreshNowPlayingUI(track);
   refs.audio.src = playableUrlFor(track);
   refs.audio.currentTime = playerState.currentTime;
+  applyPlaybackRate();
   refs.audio.preload = "auto";
   updateMediaSessionMetadata(track);
   updateActiveRow();
@@ -1714,13 +1854,23 @@ const formatDuration = formatTime;
    Playbar / row syncing
    ============================================================ */
 
+function setPbArtArtwork(art) {
+  refs.pbArt.querySelectorAll("img").forEach((img) => img.remove());
+  if (art) {
+    const img = document.createElement("img");
+    img.src = art;
+    img.alt = "";
+    refs.pbArt.appendChild(img);
+  }
+}
+
 function refreshNowPlayingUI(track) {
   refs.pbTitle.textContent = track.title;
   refs.pbArtist.textContent = track.artist || "Unknown artist";
   refs.vizTrackTitle.textContent = track.title;
   refs.vizTrackArtist.textContent = track.artist || "Unknown artist";
   const art = track.art || (track.album ? placeholderArt(`${track.artist}::${track.album}`) : placeholderArt(track.id));
-  refs.pbArt.innerHTML = art ? `<img src="${art}" alt="" />` : "";
+  setPbArtArtwork(art);
   refs.pbAddBtn.hidden = !getPlaylists().length;
 }
 
@@ -1945,9 +2095,44 @@ function trackList(tracks, options = {}) {
   head.querySelector(".th-sort").appendChild(buildSortSelect());
   list.appendChild(head);
   const visible = options.preserveOrder ? tracks : sortTracks(tracks);
-  visible.forEach((track, index) => {
-    list.appendChild(buildTrackRow(track, index + 1, options));
-  });
+  if (visible.length > CHUNKED_LIST_THRESHOLD) {
+    const token = ++trackListChunkToken;
+    const appendRows = (from, to) => {
+      if (token !== trackListChunkToken) return;
+      const fragment = document.createDocumentFragment();
+      for (let i = from; i < to && i < visible.length; i++) {
+        fragment.appendChild(buildTrackRow(visible[i], i + 1, options));
+      }
+      list.appendChild(fragment);
+    };
+    appendRows(0, CHUNKED_LIST_THRESHOLD);
+    let chunkStart = CHUNKED_LIST_THRESHOLD;
+    const scheduleChunk = () => {
+      if (token !== trackListChunkToken) return;
+      const chunkEnd = Math.min(chunkStart + CHUNKED_LIST_SIZE, visible.length);
+      appendRows(chunkStart, chunkEnd);
+      chunkStart = chunkEnd;
+      if (chunkStart < visible.length) {
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(scheduleChunk, { timeout: 250 });
+        } else {
+          window.setTimeout(scheduleChunk, 0);
+        }
+      } else {
+        updateActiveRow();
+        refreshLikeButtons();
+      }
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(scheduleChunk, { timeout: 250 });
+    } else {
+      window.setTimeout(scheduleChunk, 0);
+    }
+  } else {
+    visible.forEach((track, index) => {
+      list.appendChild(buildTrackRow(track, index + 1, options));
+    });
+  }
   return list;
 }
 
@@ -2420,7 +2605,13 @@ function renderQueueView() {
     row.dataset.trackId = track.id;
     if (pos === state.queuePos) row.classList.add("active");
     row.innerHTML = `
-      <div class="row-slot"><span class="row-idx">${pos === state.queuePos ? `<svg aria-hidden="true"><use href="#i-viz" /></svg>` : ""}</span></div>
+      <div class="row-slot">
+        <button class="row-play" type="button" aria-label="Play or pause">
+          <svg aria-hidden="true" class="ico-play"><use href="#i-play" /></svg>
+          <svg aria-hidden="true" class="ico-pause"><use href="#i-pause" /></svg>
+        </button>
+        <span class="row-idx">${pos === state.queuePos ? `<svg aria-hidden="true"><use href="#i-viz" /></svg>` : ""}</span>
+      </div>
       <div class="row-info"><button class="row-title" type="button"></button><button class="row-artist" type="button"></button></div>
       <div class="row-slot right"></div>`;
     row.querySelector(".row-title").textContent = track.title;
@@ -2457,17 +2648,13 @@ function renderQueueView() {
       right.appendChild(buildNode("span", "row-dur", track.duration ? formatTime(track.duration) : "--:--"));
     }
 
-  const playBtn = row.querySelector(".row-play");
-  playBtn.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (state.radioStation?.uuid !== station.uuid) {
-      playStation(station);
-      return;
-    }
-    if (playerState.paused) playCurrent();
-    else pauseCurrent();
-  });
-  row.addEventListener("click", () => {
+    const playBtn = row.querySelector(".row-play");
+    playBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (pos !== state.queuePos) playQueueIndex(pos, { autoplay: true });
+      else togglePlayback();
+    });
+    row.addEventListener("click", () => {
       if (pos !== state.queuePos) playQueueIndex(pos, { autoplay: true });
     });
     list.appendChild(row);
@@ -2482,6 +2669,7 @@ function moveQueueEntry(from, to) {
   if (to < state.queuePos || to >= state.queue.length || from === to) return;
   const [entry] = state.queue.splice(from, 1);
   state.queue.splice(to, 0, entry);
+  state.shuffleDeck = [];
   renderView();
 }
 
@@ -2494,6 +2682,7 @@ function removeQueueEntry(pos) {
     state.queuePos = -1;
     showToast("Queue finished");
   }
+  state.shuffleDeck = [];
   renderView();
 }
 
@@ -2652,8 +2841,9 @@ function renderNavPlaylists() {
   const playlists = getPlaylists();
   const fragment = document.createDocumentFragment();
   for (const playlist of playlists) {
-    const item = buildNode("button", "nav-playlist-item");
-    item.type = "button";
+    const item = buildNode("div", "nav-playlist-item");
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
     item.dataset.playlistId = playlist.id;
     item.title = playlist.name;
     item.innerHTML = `
@@ -2696,7 +2886,16 @@ function renderNavPlaylists() {
     });
     actions.append(playBtn, deleteBtn);
     item.appendChild(actions);
-    item.addEventListener("click", () => goToView("playlist", playlist.id));
+    const itemActivate = () => goToView("playlist", playlist.id);
+    item.addEventListener("click", itemActivate);
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        itemActivate();
+      } else if (event.key === " ") {
+        event.preventDefault();
+        itemActivate();
+      }
+    });
     fragment.appendChild(item);
   }
   refs.navPlaylists.appendChild(fragment);
@@ -2795,7 +2994,8 @@ const radioState = {
 function loadRadioFavs() {
   try {
     const list = JSON.parse(localStorage.getItem(RADIO_FAVS_KEY) || "[]");
-    return Array.isArray(list) ? list.filter((x) => typeof x === "string") : [];
+    if (!Array.isArray(list)) return [];
+    return list.filter((x) => x && typeof x === "object" && typeof x.uuid === "string" && typeof x.url === "string");
   } catch {
     return [];
   }
@@ -2806,33 +3006,28 @@ function saveRadioFavs() {
 }
 
 function isRadioFav(uuid) {
-  return radioState.favs.includes(uuid);
+  return radioState.favs.some((s) => s && s.uuid === uuid);
 }
 
-function toggleRadioFav(uuid) {
-  const idx = radioState.favs.indexOf(uuid);
+function toggleRadioFav(station) {
+  const idx = radioState.favs.findIndex((s) => s && s.uuid === station.uuid);
   if (idx >= 0) radioState.favs.splice(idx, 1);
-  else radioState.favs.unshift(uuid);
+  else radioState.favs.unshift({
+    uuid: station.uuid,
+    name: station.name,
+    url: station.url,
+    alt: station.alt || "",
+    country: station.country || "",
+    codec: station.codec || "",
+    bitrate: station.bitrate || 0,
+    tags: station.tags || "",
+    favicon: station.favicon || "",
+  });
   saveRadioFavs();
 }
 
 function invalidateRadioView() {
   if (state.view === "radio" && !state.vizOpen) renderView();
-}
-
-function saveRadioFavs() {
-  localStorage.setItem(RADIO_FAVS_KEY, JSON.stringify(radioState.favs));
-}
-
-function isRadioFav(uuid) {
-  return radioState.favs.includes(uuid);
-}
-
-function toggleRadioFav(uuid) {
-  const idx = radioState.favs.indexOf(uuid);
-  if (idx >= 0) radioState.favs.splice(idx, 1);
-  else radioState.favs.unshift(uuid);
-  saveRadioFavs();
 }
 
 async function fetchRadioStations(tag) {
@@ -2974,7 +3169,7 @@ function buildRadioRow(station) {
   renderRadioFavButton(favBtn.querySelector(".fav-star"), station.uuid);
   favBtn.addEventListener("click", (event) => {
     event.stopPropagation();
-    toggleRadioFav(station.uuid);
+    toggleRadioFav(station);
     renderRadioFavButton(favBtn.querySelector(".fav-star"), station.uuid);
   });
   row.addEventListener("click", () => {
@@ -3041,10 +3236,25 @@ function renderRadioView() {
       : buildNode("div", "view-empty", "No stations found. Try the All chip or another search term.");
     fragment.appendChild(empty);
   } else {
-    radioState.visible = radioState.stations.filter(matchRadioFilter);
-    const favs = radioState.visible.filter((s) => isRadioFav(s.uuid));
-    const others = radioState.visible.filter((s) => !isRadioFav(s.uuid));
-    const rowsList = [...favs, ...others];
+    const visibleStations = radioState.stations.filter(matchRadioFilter);
+    const seen = new Set();
+    const rowsList = [];
+    for (const fav of radioState.favs) {
+      if (seen.has(fav.uuid)) continue;
+      const term = state.searchTerm.toLowerCase().trim();
+      const termOk = !term || [fav.name, fav.tags, fav.country].join(" ").toLowerCase().includes(term);
+      if (termOk) {
+        seen.add(fav.uuid);
+        rowsList.push(fav);
+      }
+    }
+    for (const station of visibleStations) {
+      if (!seen.has(station.uuid)) {
+        seen.add(station.uuid);
+        rowsList.push(station);
+      }
+    }
+    radioState.visible = rowsList;
     if (!rowsList.length) {
       fragment.appendChild(buildNode("div", "view-empty", "Nothing matches your search."));
     } else {
@@ -3123,11 +3333,12 @@ function updateRadioNowPlaying() {
   refs.pbArtist.textContent = radioStationSubtitle(station);
   refs.vizTrackTitle.textContent = station.name;
   refs.vizTrackArtist.textContent = radioStationSubtitle(station);
-  const art = station.favicon;
-  if (art) {
-    refs.pbArt.innerHTML = `<img src="${art}" alt="" onerror="this.remove()" />`;
-  } else {
-    refs.pbArt.innerHTML = "";
+  setPbArtArtwork(station.favicon);
+  const img = refs.pbArt.querySelector("img");
+  if (img && station.favicon) {
+    img.addEventListener("error", () => {
+      if (state.radioStation === station) img.remove();
+    });
   }
   refs.pbLikeBtn.hidden = true;
   refs.pbAddBtn.hidden = true;
@@ -3294,6 +3505,7 @@ function enqueueIdsNext(ids) {
   } else {
     for (const id of list) insertNextInQueue(id);
   }
+  state.shuffleDeck = [];
   showToast(`${list.length} track${list.length === 1 ? "" : "s"} play next`);
 }
 
@@ -3310,6 +3522,7 @@ function enqueueIdsEnd(ids) {
       state.queue.push({ id });
     }
   }
+  state.shuffleDeck = [];
   showToast(`${list.length} track${list.length === 1 ? "" : "s"} queued`);
 }
 
@@ -3542,7 +3755,7 @@ function syncMediaSessionState() {
       lastPositionStateWrite = now;
       navigator.mediaSession.setPositionState({
         duration,
-        playbackRate: 1,
+        playbackRate: clamp(state.playbackRate || 1, 0.25, 3),
         position: clamp(playerState.currentTime, 0, duration),
       });
     }
@@ -3753,11 +3966,29 @@ async function hydrateTrackMetadataInBackground() {
       const track = pending[cursor];
       cursor += 1;
       let blobProbeUrl = "";
+      let createdProbeUrl = false;
       try {
         if (track.duration === 0) {
-          blobProbeUrl = track.src || (track.localFile ? URL.createObjectURL(track.localFile) : "");
-          const duration = await probeAudioDuration(blobProbeUrl);
-          if (duration > 0) track.duration = duration;
+          const cacheKey = track._durationCacheKey || (track._durationCacheKey = durationCacheKeyFor(track));
+          const cachedDuration = loadDurationCache()[cacheKey];
+          if (Number(cachedDuration) > 0) {
+            track.duration = Number(cachedDuration);
+          } else if (track.src) {
+            blobProbeUrl = track.src;
+            const duration = await probeAudioDuration(blobProbeUrl);
+            if (duration > 0) {
+              track.duration = duration;
+              saveDurationCacheEntry(cacheKey, duration);
+            }
+          } else if (track.localFile) {
+            blobProbeUrl = URL.createObjectURL(track.localFile);
+            createdProbeUrl = true;
+            const duration = await probeAudioDuration(blobProbeUrl);
+            if (duration > 0) {
+              track.duration = duration;
+              saveDurationCacheEntry(cacheKey, duration);
+            }
+          }
         }
         let tags = null;
         try {
@@ -3773,7 +4004,7 @@ async function hydrateTrackMetadataInBackground() {
       } catch {
         // ignore unsupported files
       } finally {
-        if (blobProbeUrl.startsWith("blob:")) URL.revokeObjectURL(blobProbeUrl);
+        if (createdProbeUrl && blobProbeUrl.startsWith("blob:")) URL.revokeObjectURL(blobProbeUrl);
       }
     }
   };
@@ -3961,6 +4192,7 @@ function closeViz() {
   document.body.classList.remove("viz-open");
   stopVizLoop();
   drawImmersiveFrame.lastT = 0;
+  renderView();
   if (!playerState.paused) startVizLoop();
 }
 
@@ -4137,6 +4369,10 @@ function renderVizStyleMenu() {
 
 function onVizSeekInput() {
   if (!refs.audio || !playerState.duration) return;
+  if (!state.radioStation) {
+    abortCrossfade();
+    abortGapless();
+  }
   const fraction = Number(refs.vizSeekSlider.value) / 1000;
   refs.audio.currentTime = fraction * playerState.duration;
   playerState.currentTime = refs.audio.currentTime;
@@ -4423,12 +4659,14 @@ function drawMiniSpectrum() {
   if (!mini || !analyser) return;
   const ctx = mini.getContext("2d");
   ctx.clearRect(0, 0, mini.width, mini.height);
-  const freq = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(freq);
+  if (featureTmpUint8.length !== analyser.frequencyBinCount) {
+    featureTmpUint8 = new Uint8Array(analyser.frequencyBinCount);
+  }
+  analyser.getByteFrequencyData(featureTmpUint8);
   const accent = accentColors().accent;
   const bars = 32;
   const nyquist = audioContext ? audioContext.sampleRate / 2 : 22050;
-  const bins = freq.length;
+  const bins = featureTmpUint8.length;
   ctx.fillStyle = accent;
   for (let i = 0; i < bars; i++) {
     // log mapping: octave-equivalent spacing
@@ -4437,7 +4675,7 @@ function drawMiniSpectrum() {
     const lo = clamp(Math.floor((fLo / nyquist) * bins), 0, bins - 1);
     const hi = clamp(Math.ceil((fHi / nyquist) * bins), lo + 1, bins - 1);
     let peak = 0;
-    for (let b = lo; b <= hi; b++) peak = Math.max(peak, freq[b]);
+    for (let b = lo; b <= hi; b++) peak = Math.max(peak, featureTmpUint8[b]);
     const v = (peak / 255) * autoGainScale();
     const bw = mini.width / bars;
     const barH = Math.max(2, clamp(v, 0, 1) * (mini.height - 6));
@@ -4767,6 +5005,7 @@ function drawSpectrum(ctx, w, h) {
   const gap = Math.max(2, Math.round(w / 180));
   const barW = Math.max(3, Math.round(w / 84));
   const bars = Math.floor(w / (barW + gap));
+  while (spectrumPeakData.length < bars) spectrumPeakData.push(0);
   const nyquist = audioContext ? audioContext.sampleRate / 2 : 22050;
   const bins = analyser.frequencyBinCount;
   analyser.getByteFrequencyData(featureTmpUint8);
@@ -5157,6 +5396,37 @@ function bindEvents() {
     applyEq();
     syncEqSliders();
   });
+  if (refs.playbackRateSelect) {
+    refs.playbackRateSelect.addEventListener("change", () => {
+      const value = refs.playbackRateSelect.value;
+      state.playbackRate = clamp(Number(value) || 1, 0.25, 3);
+      try {
+        localStorage.setItem("mp_rate", String(state.playbackRate));
+      } catch {
+        // ignore
+      }
+      applyPlaybackRate();
+      showToast(value === "1" ? "Speed: normal" : `Speed: ${value}×`);
+    });
+  }
+  if (refs.sleepTimerSelect) {
+    refs.sleepTimerSelect.addEventListener("change", () => {
+      const value = refs.sleepTimerSelect.value;
+      state.sleepTimerMin = Math.max(0, Number(value) || 0);
+      try {
+        localStorage.setItem("mp_sleep_min", String(state.sleepTimerMin));
+      } catch {
+        // ignore
+      }
+      sleepDeadline = 0;
+      if (sleepTimerId) {
+        window.clearTimeout(sleepTimerId);
+        sleepTimerId = 0;
+      }
+      if (state.sleepTimerMin > 0 && !playerState.paused) armSleepTimer();
+      showToast(state.sleepTimerMin > 0 ? `Sleep timer: ${state.sleepTimerMin} min` : "Sleep timer: off");
+    });
+  }
   refs.playPauseBtn.addEventListener("click", togglePlayback);
   refs.prevBtn.addEventListener("click", playPrevious);
   refs.nextBtn.addEventListener("click", playNext);
@@ -5223,8 +5493,7 @@ function bindEvents() {
     const leftovers = trackId ? [trackId, ...trackIds] : trackIds;
     const playlist = createPlaylist(name, leftovers);
     renderNavPlaylists();
-    if (leftovers.length) goToView("playlist", playlist.id);
-    else goToView("playlist", playlist.id);
+    goToView("playlist", playlist.id);
     showToast(`Created "${playlist.name}"`);
   });
   for (const cancelBtn of ["newPlaylistCancel", "newPlaylistCancel2"]) {
@@ -5252,9 +5521,15 @@ function toggleHelpDialog() {
   else refs.helpDialog.showModal();
 }
 
+let searchRenderTimer = 0;
+
 function onSearchInput() {
   state.searchTerm = refs.searchInput.value;
-  renderView();
+  if (searchRenderTimer) window.clearTimeout(searchRenderTimer);
+  searchRenderTimer = window.setTimeout(() => {
+    searchRenderTimer = 0;
+    renderView();
+  }, 150);
 }
 
 function onVolumeInput() {
@@ -5282,6 +5557,10 @@ function toggleMute() {
 
 function onSeekInput() {
   if (!refs.audio || !playerState.duration) return;
+  if (!state.radioStation) {
+    abortCrossfade();
+    abortGapless();
+  }
   const fraction = Number(refs.seekSlider.value) / 1000;
   refs.audio.currentTime = fraction * playerState.duration;
   playerState.currentTime = refs.audio.currentTime;
@@ -5292,6 +5571,9 @@ function onSeekInput() {
 
 function toggleShuffle() {
   state.shuffle = !state.shuffle;
+  if (state.shuffle && state.queue.length) {
+    buildShuffleDeck();
+  }
   localStorage.setItem("mp_shuffle", state.shuffle ? "1" : "0");
   refreshTransportControls();
   showToast(`Shuffle mode ${state.shuffle ? "on" : "off"}`);
@@ -5359,9 +5641,20 @@ function onKeyDown(event) {
     refs.helpDialog.open ||
     refs.settingsDialog.open ||
     refs.newPlaylistDialog.open;
-  if (event.key === "Escape" && state.vizOpen) {
-    closeViz();
-    return;
+  if (event.key === "Escape") {
+    if (!refs.addMenu.hidden) {
+      closeRowMenu();
+      return;
+    }
+    if (state.vizOpen) {
+      const vizStyleMenu = document.getElementById("vizStyleMenu");
+      if (vizStyleMenu && !vizStyleMenu.hidden) {
+        toggleVizStyleMenu(false);
+        return;
+      }
+      closeViz();
+      return;
+    }
   }
   if (typing) return;
   if (state.vizOpen) {
@@ -5386,11 +5679,13 @@ function onKeyDown(event) {
       break;
     case "ArrowRight":
       if (!state.vizOpen && refs.audio && playerState.duration) {
+        event.preventDefault();
         refs.audio.currentTime = Math.min(playerState.duration, refs.audio.currentTime + 5);
       }
       break;
     case "ArrowLeft":
       if (!state.vizOpen && refs.audio) {
+        event.preventDefault();
         refs.audio.currentTime = Math.max(0, refs.audio.currentTime - 5);
       }
       break;

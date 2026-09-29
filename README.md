@@ -9,9 +9,10 @@ web host (PHP optional, none needed) and it plays your files.
 
 - **Native-first playback:** MP3, AAC/M4A, FLAC, OGG (Vorbis/Opus) and WAV play
   through the browser's native `<audio>` element.
-- **Real-time visualizations:** a Web Audio `AnalyserNode` drives a canvas
-  visualizer with three modes — frequency bars, mirrored bars and an
-  oscilloscope wave — tinted by your chosen accent color. Cycle modes with `V`.
+- **Real-time visualizations:** a Web Audio `AnalyserNode` drives five
+  visualizer styles — Aurora, Spectrum, Nebula and Tunnel canvas modes plus
+  MilkDrop presets via Butterchurn — tinted by your chosen accent color.
+  Toggle the full-screen visualizer with `V`.
 - **Playlist management:** create/delete playlists (saved in localStorage), add
   tracks from the `+` button on any card, remove from playlist detail view, and
   fire up any playlist in one click.
@@ -81,10 +82,12 @@ server with range support works too.
 | `N` / `P` | Next / previous track |
 | `S` | Shuffle |
 | `R` | Repeat: off → all → one |
-| `V` | Cycle visualizer (bars → mirrored → wave → off) |
+| `V` | Toggle full-screen visualizer |
+| `L` | Like / unlike current track |
 | `M` | Mute |
 | `/` | Focus search |
 | `?` | Shortcut help |
+| `Esc` | Close visualizer / menus |
 
 ## Structure
 

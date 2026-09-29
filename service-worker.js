@@ -1,6 +1,6 @@
 "use strict";
 
-const VERSION = "v11";
+const VERSION = "v13";
 const SHELL_CACHE = `mp-shell-${VERSION}`;
 const RUNTIME_CACHE = `mp-runtime-${VERSION}`;
 const AUDIO_CACHE = `mp-audio-${VERSION}`;
@@ -20,6 +20,7 @@ const SHELL_PRECACHE = [
 
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "skip-waiting") self.skipWaiting();
+  if (event.data && event.data.type === "client-claim-update") self.skipWaiting();
 });
 
 self.addEventListener("install", (event) => {
@@ -72,6 +73,85 @@ async function trimCache(cacheName, max) {
   if (keys.length <= max) return;
   for (const key of keys.slice(0, keys.length - max)) {
     await cache.delete(key);
+  }
+}
+
+function parseRange(header) {
+  if (!header) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header);
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === "" && rawEnd === "") return null;
+  if (rawStart === "") return { suffix: Number(rawEnd) };
+  return { start: Number(rawStart), end: rawEnd === "" ? null : Number(rawEnd) };
+}
+
+function resolveRange(range, total) {
+  if (!range) return null;
+  let start;
+  let end;
+  if (range.suffix !== undefined) {
+    start = Math.max(0, total - range.suffix);
+    end = total - 1;
+  } else {
+    start = range.start;
+    end = range.end === null ? total - 1 : Math.min(range.end, total - 1);
+  }
+  if (start > end) return null;
+  return { start, end };
+}
+
+function partialResponse(buffer, start, end, total, contentType) {
+  return new Response(buffer.slice(start, end + 1), {
+    status: 206,
+    statusText: "Partial Content",
+    headers: {
+      "Content-Type": contentType,
+      "Content-Range": `bytes ${start}-${end}/${total}`,
+      "Accept-Ranges": "bytes",
+    },
+  });
+}
+
+async function handleAudioRequest(request) {
+  const cache = await caches.open(AUDIO_CACHE);
+  const range = parseRange(request.headers.get("Range"));
+  const cached = await cache.match(request.url, { ignoreVary: true });
+  if (cached && cached.ok && cached.status === 200) {
+    try {
+      const buffer = await cached.clone().arrayBuffer();
+      const resolved = resolveRange(range, buffer.byteLength);
+      if (!resolved) return cached;
+      return partialResponse(buffer, resolved.start, resolved.end, buffer.byteLength, cached.headers.get("Content-Type") || "application/octet-stream");
+    } catch {
+      return fetch(request);
+    }
+  }
+  let fresh = null;
+  try {
+    fresh = await fetch(request.url);
+  } catch {
+    fresh = null;
+  }
+  if (fresh && fresh.ok && fresh.status === 200) {
+    try {
+      const buffer = await fresh.clone().arrayBuffer();
+      const resolved = resolveRange(range, buffer.byteLength);
+      if (new URL(request.url).origin === self.location.origin) {
+        // trim before adding keeps the cache bounded
+        await trimCache(AUDIO_CACHE, MAX_AUDIO_ENTRIES - 1);
+        await cache.put(request.url, fresh.clone());
+      }
+      if (!resolved) return fresh;
+      return partialResponse(buffer, resolved.start, resolved.end, buffer.byteLength, fresh.headers.get("Content-Type") || "application/octet-stream");
+    } catch {
+      return fetch(request);
+    }
+  }
+  try {
+    return await fetch(request);
+  } catch {
+    return new Response("", { status: 504, statusText: "Offline" });
   }
 }
 
@@ -131,25 +211,7 @@ self.addEventListener("fetch", (event) => {
 
   // audio files: cache-first so previously played tracks work offline
   if (isAudioRequest(url)) {
-    event.respondWith(
-      (async () => {
-        const cache = await caches.open(AUDIO_CACHE);
-        const cached = await cache.match(request, { ignoreVary: true });
-        if (cached) return cached;
-        try {
-          const response = await fetch(request);
-          if (response && response.ok && response.status === 200) {
-            // trim before adding keeps the cache bounded
-            await trimCache(AUDIO_CACHE, MAX_AUDIO_ENTRIES - 1);
-            cache.put(request, response.clone()).catch(() => {});
-            return response;
-          }
-          return response;
-        } catch {
-          return new Response("", { status: 504, statusText: "Offline" });
-        }
-      })()
-    );
+    event.respondWith(handleAudioRequest(request));
     return;
   }
 
@@ -161,11 +223,15 @@ self.addEventListener("fetch", (event) => {
 
   if (url.origin !== self.location.origin) return;
 
-  // app shell & local assets: network-first so code updates land immediately;
-  // the precache only serves as an offline fallback
+  // app shell (navigations/HTML): stale-while-revalidate so the cached shell
+  // paints instantly offline; the network refresh runs in the background so
+  // updates land on the next load. May briefly run a stale shell after an
+  // update, which is accepted because app.js is version-busted via ?v=.
   if (request.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith(".html")) {
-    event.respondWith(networkFirst(request, SHELL_CACHE));
+    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE));
     return;
   }
+  // remaining same-origin assets (js/css/manifest/icons): network-first so
+  // code updates land immediately
   event.respondWith(networkFirst(request, SHELL_CACHE));
 });

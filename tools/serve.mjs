@@ -48,10 +48,16 @@ const server = createServer(async (req, res) => {
 
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    pathname = url.pathname;
+  }
 
   const filePath = path.normalize(path.join(root, pathname));
-  if (!filePath.startsWith(root)) {
+  const rel = path.relative(root, filePath);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
     res.writeHead(403).end("Forbidden");
     return;
   }
@@ -75,11 +81,12 @@ async function handle(req, res) {
         .filter((entry) => !entry.name.startsWith("."))
         .map((entry) => {
           const name = entry.isDirectory() ? `${entry.name}/` : entry.name;
-          return `<li><a href="${pathname.endsWith("/") ? pathname : `${pathname}/`}${name}">${name}</a></li>`;
+          const href = `${pathname.endsWith("/") ? pathname : `${pathname}/`}${name}`;
+          return `<li><a href="${escapeHtml(href)}">${escapeHtml(name)}</a></li>`;
         })
         .join("");
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(
-        `<!doctype html><meta charset="utf-8"><title>Index of ${pathname}</title><h1>Index of ${pathname}</h1><ul>${links}</ul>`
+        `<!doctype html><meta charset="utf-8"><title>Index of ${escapeHtml(pathname)}</title><h1>Index of ${escapeHtml(pathname)}</h1><ul>${links}</ul>`
       );
       return;
     }
@@ -88,13 +95,35 @@ async function handle(req, res) {
   return sendFile(res, filePath, stat, req.headers.range);
 }
 
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", '&#39;');
+}
+
 async function sendFile(res, filePath, stat, rangeHeader) {
   const mime = MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream";
 
   if (rangeHeader) {
     const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
-    const start = match ? Number(match[1] || 0) : 0;
-    const end = match && match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+    let start;
+    let end;
+
+    if (match) {
+      if (match[1] === "" && match[2] !== "") {
+        start = Math.max(0, stat.size - Number(match[2]));
+        end = stat.size - 1;
+      } else {
+        start = Number(match[1] || 0);
+        end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      }
+    } else {
+      start = 0;
+      end = stat.size - 1;
+    }
 
     if (Number.isNaN(start) || start >= stat.size || start > end) {
       res.writeHead(416, { "Content-Range": `bytes */${stat.size}` }).end();
