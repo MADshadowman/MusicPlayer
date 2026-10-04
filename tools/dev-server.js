@@ -1,15 +1,6 @@
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const root = path.join(__dirname, "..");
-const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".webmanifest": "application/manifest+json", ".png": "image/png" };
-http.createServer((req, res) => {
-  let p = decodeURIComponent(req.url.split("?")[0]);
-  if (p === "/" || p === "/index.html") p = "/index.html";
-  const file = path.join(root, p);
-  fs.readFile(file, (err, data) => {
-    if (err) { res.writeHead(404); res.end("nope"); return; }
-    res.writeHead(200, { "Content-Type": types[path.extname(file)] || "application/octet-stream" });
-    res.end(data);
-  });
-}).listen(5178, () => console.log("serving on 5178"));
+// Compatibility entry point; share the restricted server documented in README.
+process.argv[2] ||= "5178";
+import("./serve.mjs").catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

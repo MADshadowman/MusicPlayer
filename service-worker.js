@@ -1,9 +1,11 @@
 "use strict";
 
-const VERSION = "v13";
-const SHELL_CACHE = `mp-shell-${VERSION}`;
-const RUNTIME_CACHE = `mp-runtime-${VERSION}`;
-const AUDIO_CACHE = `mp-audio-${VERSION}`;
+const VERSION = "v14";
+// CacheStorage is shared by the entire origin, including other Pages projects.
+const CACHE_PREFIX = `mp-${encodeURIComponent(self.registration.scope)}-`;
+const SHELL_CACHE = `${CACHE_PREFIX}shell-${VERSION}`;
+const RUNTIME_CACHE = `${CACHE_PREFIX}runtime-${VERSION}`;
+const AUDIO_CACHE = `${CACHE_PREFIX}audio-${VERSION}`;
 const MAX_AUDIO_ENTRIES = 60;
 
 const SHELL_PRECACHE = [
@@ -46,7 +48,7 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const keep = new Set([SHELL_CACHE, RUNTIME_CACHE, AUDIO_CACHE]);
       for (const name of await caches.keys()) {
-        if (!keep.has(name)) await caches.delete(name);
+        if (name.startsWith(CACHE_PREFIX) && !keep.has(name)) await caches.delete(name);
       }
       await self.clients.claim();
     })()

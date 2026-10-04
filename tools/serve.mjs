@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = process.cwd();
+const root = await fs.realpath(fileURLToPath(new URL("../", import.meta.url)));
 const port = Number(process.argv[2] || 8080);
 
 const MIME = {
@@ -42,7 +43,8 @@ const server = createServer(async (req, res) => {
   try {
     await handle(req, res);
   } catch (error) {
-    res.writeHead(500).end(String(error?.message || error));
+    if (res.headersSent) res.destroy();
+    else res.writeHead(500).end("Internal server error");
   }
 });
 
@@ -52,18 +54,28 @@ async function handle(req, res) {
   try {
     pathname = decodeURIComponent(url.pathname);
   } catch {
-    pathname = url.pathname;
+    res.writeHead(400).end("Invalid path");
+    return;
   }
 
-  const filePath = path.normalize(path.join(root, pathname));
-  const rel = path.relative(root, filePath);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+  // Windows also accepts backslashes and alternate data stream syntax.
+  if (pathname.includes("\\") || /[:\x00]/.test(pathname) ||
+      pathname.split("/").some((segment) => segment.startsWith("."))) {
+    res.writeHead(403).end("Forbidden");
+    return;
+  }
+  const filePath = path.resolve(root, `.${pathname}`);
+  if (!isPublicPath(filePath)) {
     res.writeHead(403).end("Forbidden");
     return;
   }
 
   let stat;
   try {
+    if (!isPublicPath(await fs.realpath(filePath))) {
+      res.writeHead(403).end("Forbidden");
+      return;
+    }
     stat = await fs.stat(filePath);
   } catch {
     res.writeHead(404).end("Not found");
@@ -73,6 +85,10 @@ async function handle(req, res) {
   if (stat.isDirectory()) {
     const indexFile = path.join(filePath, "index.html");
     try {
+      if (!isPublicPath(await fs.realpath(indexFile))) {
+        res.writeHead(403).end("Forbidden");
+        return;
+      }
       const indexStat = await fs.stat(indexFile);
       return await sendFile(res, indexFile, indexStat, req.headers.range);
     } catch {
@@ -81,7 +97,7 @@ async function handle(req, res) {
         .filter((entry) => !entry.name.startsWith("."))
         .map((entry) => {
           const name = entry.isDirectory() ? `${entry.name}/` : entry.name;
-          const href = `${pathname.endsWith("/") ? pathname : `${pathname}/`}${name}`;
+          const href = `${pathname.endsWith("/") ? pathname : `${pathname}/`}${encodeURIComponent(entry.name)}${entry.isDirectory() ? "/" : ""}`;
           return `<li><a href="${escapeHtml(href)}">${escapeHtml(name)}</a></li>`;
         })
         .join("");
@@ -93,6 +109,12 @@ async function handle(req, res) {
   }
 
   return sendFile(res, filePath, stat, req.headers.range);
+}
+
+function isPublicPath(filePath) {
+  const rel = path.relative(root, filePath);
+  return !path.isAbsolute(rel) &&
+    !rel.split(path.sep).some((segment) => segment.startsWith("."));
 }
 
 function escapeHtml(value) {
@@ -154,6 +176,6 @@ async function sendFile(res, filePath, stat, rangeHeader) {
   stream.on("error", () => res.destroy());
 }
 
-server.listen(port, () => {
-  console.log(`MusicPlayer dev server running at http://localhost:${port}`);
+server.listen(port, "127.0.0.1", () => {
+  console.log(`MusicPlayer dev server running at http://localhost:${server.address().port}`);
 });

@@ -1,53 +1,68 @@
 # MusicPlayer
 
-A self-hosted personal music player with audio visualizations and playlist
-management — built with plain HTML/CSS/JS. **No build step, no npm install, no
-framework.** Adapted from the same architecture as VideoPlayer: drop it on any
-web host (PHP optional, none needed) and it plays your files.
+A self-hosted personal music player built with plain HTML, CSS and JavaScript.
+Browse your music by album or artist, build playlists, listen to internet radio,
+and enjoy audio-reactive visualizations. No build step, npm install or backend required.
 
-## Highlights
+![MusicPlayer showing the artist library and playback controls](docs/screenshot.png)
 
-- **Native-first playback:** MP3, AAC/M4A, FLAC, OGG (Vorbis/Opus) and WAV play
-  through the browser's native `<audio>` element.
-- **Real-time visualizations:** a Web Audio `AnalyserNode` drives five
-  visualizer styles — Aurora, Spectrum, Nebula and Tunnel canvas modes plus
-  MilkDrop presets via Butterchurn — tinted by your chosen accent color.
-  Toggle the full-screen visualizer with `V`.
-- **Playlist management:** create/delete playlists (saved in localStorage), add
-  tracks from the `+` button on any card, remove from playlist detail view, and
-  fire up any playlist in one click.
-- **Queue controls:** shuffle, repeat (off / all / one), "play next in queue",
-  autoplay continuation — persisted across sessions.
-- **Auto-discovering library:** `tracks/tracks.json` manifest → directory
-  listing fallback → client-side **Open Folder** import (with cover-art
-  matching per folder and `Artist - Title` filename parsing).
-- **Automatic metadata hydration:** duration is probed per file and filled into
-  the cards.
-- **Modern UI:** dark glass design, search, sorting (title/artist/album/
-  length/date), MediaSession lock-screen controls, keyboard shortcuts, fully
-  responsive from phones to widescreen.
+## Features
+
+- **Music library:** album and artist views, search, sorting, liked tracks and
+  recent listening history. Import a local folder or drag and drop music.
+- **Metadata and artwork:** reads ID3, FLAC, Ogg and MP4/M4A tags, including
+  embedded cover art, with filename and folder artwork fallbacks.
+- **Playback:** shuffle, repeat, editable queue, session restore, preloading for
+  gapless transitions, and optional 2-12 second crossfades. Exact transition
+  behavior depends on the browser and audio format.
+- **Playlists:** create, rename and delete playlists, and add or remove tracks
+  individually or in groups.
+- **Internet radio:** discover stations through Radio Browser, filter by genre,
+  search and save favorite stations.
+- **Sound controls:** 10-band equalizer with presets, volume boost, playback
+  speed and a sleep timer.
+- **Visualizations:** Aurora, Spectrum, Nebula and Tunnel canvas modes, plus
+  MilkDrop presets powered by Butterchurn. Press `V` for the full-screen view.
+- **Personalization:** themes, accent colors and visualizer settings, plus
+  keyboard shortcuts and supported system/lock-screen media controls.
+- **Installable web app:** service-worker caching for the app shell and recently
+  played hosted audio, with optional screen wake lock on supported browsers.
 
 ## Quick start
 
-```bash
-# from the repo root
+Install a current [Node.js LTS](https://nodejs.org/) release, then run from the
+repository root:
+
+```sh
 node tools/serve.mjs 8080
-# open http://localhost:8080
 ```
 
-Then put audio files in `tracks/`. That's the whole setup — the dev server is a
-tiny zero-dependency Node script with HTTP range support; any static file
-server with range support works too.
+Open <http://localhost:8080> and choose **Open folder**, or put audio files inside
+`tracks/` and click **Reload**. The included server supports directory discovery
+and HTTP range requests. It listens only on the local computer and blocks hidden
+files and paths outside this repository. It is a development server; use a static
+web host for deployment.
 
-### Library sources
+MP3, AAC/M4A, FLAC, Ogg (Vorbis/Opus) and WAV use the browser's native audio
+support. Format support varies by browser and operating system.
 
-1. `tracks/tracks.json` or `tracks.json` manifest (optional, but enables
-   explicit metadata: title, artist, album, genre, art, duration)
-2. Directory index parsing (`tracks/`) if the host exposes listings
-3. The **Open Folder** button — client-side folder import, works offline and
-   from `file://`
+## Adding music
 
-### Manifest format
+The player tries these library sources in order:
+
+1. A nonempty `tracks/tracks.json` or `tracks.json` manifest.
+2. Directory listings under `tracks/`, including nested folders, if the host
+   exposes them.
+3. Use **Open folder** or drag and drop files/folders to load a local library.
+
+Local imports stay on your device; they are not uploaded. Reopen the folder after
+reloading the page, since the browser's temporary file URLs do not persist.
+Personal audio and artwork under `tracks/` are ignored by Git; the sample
+`tracks/tracks.json` is deliberately empty.
+
+### Library manifest
+
+Use a manifest on hosts without directory listings, including GitHub Pages:
 
 ```json
 {
@@ -57,63 +72,86 @@ server with range support works too.
       "title": "Nightride",
       "artist": "Synthia",
       "album": "Neon Drive",
-      "src": "nightride.mp3",
-      "art": "cover.jpg",
+      "src": "tracks/nightride.mp3",
+      "art": "tracks/cover.jpg",
       "duration": 214
     }
   ]
 }
 ```
 
-### Folder import conventions
+`src` and `art` paths are relative to the **player page**, not the manifest file.
+Absolute URLs also work, subject to the host's CORS rules. Keep track IDs stable
+so saved playlists and likes can refer to the same tracks. Duration is in seconds;
+missing metadata is filled in where available. You can select another manifest
+with `?manifest=path/to/library.json`.
 
-- Cover art: any image inside the track's folder (files named `cover`, `album`,
-  `folder`, or `front` win) is shown as the animated pulsing art.
-- `Artist - Title.mp3` filenames are parsed into separate artist/title.
-- `folder/Artist/Album/track.mp3` paths are parsed from the subdirectory names.
+Folder imports recognize `Artist - Title` filenames and use folder names as
+fallback metadata. Images named `cover`, `album`, `folder` or `front` are preferred
+for folder artwork.
+
+## Hosting and GitHub Pages
+
+Serve the repository as static files over HTTPS. No PHP or server-side application
+is needed. For GitHub Pages, push the repository, then select the publishing branch
+and `/ (root)` under **Settings > Pages**. Relative app paths support project sites
+such as `https://username.github.io/MusicPlayer/`.
+
+GitHub Pages does not generate directory listings. Use **Open folder** for local
+music, or provide a manifest pointing to hosted audio. Music ignored by Git will
+not be included in a Pages deployment. Publish only audio and artwork you have
+permission to distribute. For other static hosts, HTTP range support is recommended
+for seeking through large audio files. The included `.htaccess` adds cache headers
+on Apache hosts that support it; GitHub Pages does not use that file.
+
+## Storage, offline use and browser support
+
+- Playlists, likes, history, radio favorites, preferences and playback session
+  information are stored in `localStorage` for this browser and site. Clearing
+  site data removes them; there is no account or cloud synchronization.
+- Installation, service workers and some folder/wake-lock APIs require HTTPS or
+  localhost and browser support. Use the local server instead of `file://` for
+  the full feature set.
+- The service worker caches the app shell and up to 60 same-origin hosted audio
+  files. Offline playback depends on successful caching and available browser
+  storage; imported files must be reopened and live radio needs a connection.
+- Google Fonts, Butterchurn and its presets load from external services. Their
+  first use requires internet access; cached assets may be available offline.
+- Radio availability depends on each station. HTTPS pages may block HTTP streams;
+  streams without CORS support may play without equalizer/visualizer processing.
 
 ## Keyboard shortcuts
 
 | Key | Action |
 | --- | --- |
 | `Space` | Play / pause |
-| `←` / `→` | Seek ±5 s |
-| `↑` / `↓` | Volume ±5% |
+| Left / right arrow | Seek 5 seconds; change presets in the visualizer |
+| Up / down arrow | Adjust volume by 5% |
 | `N` / `P` | Next / previous track |
-| `S` | Shuffle |
-| `R` | Repeat: off → all → one |
+| `S` | Toggle shuffle |
+| `R` | Cycle repeat: off, all, one |
 | `V` | Toggle full-screen visualizer |
 | `L` | Like / unlike current track |
-| `M` | Mute |
+| `M` | Mute / unmute |
 | `/` | Focus search |
-| `?` | Shortcut help |
+| `?` | Show shortcut help |
 | `Esc` | Close visualizer / menus |
 
-## Structure
+## Development
 
-```text
-MusicPlayer/
-  index.html
-  styles.css
-  app.js
-  tools/serve.mjs
-  tracks/
-    your-track.mp3
-    cover.jpg
-    tracks.json
+Edit the source files directly and reload the page. `app.js` contains the player
+and UI, `metadata-reader.js` reads audio tags, and `service-worker.js` manages
+caching. `tools/dev-server.js` is a compatibility entry point for the same local
+server, defaulting to port 5178.
+
+Run the server and cache regression checks with:
+
+```sh
+node --test tools/readiness.test.mjs
 ```
-
-## Notes
-
-- Visualizations require playing from HTTP rather than `file://` for remote
-  sources, because Web Audio analysis needs clean same-origin/CORS access.
-  Locally imported files (Open Folder) work everywhere.
-- `MediaElementSource` means one `<audio>` element drives both playback and the
-  analyser — the graph is created lazily on first play (browser autoplay
-  policy friendly).
-- Playlists and preferences live in `localStorage`; the manifest remains the
-  source of truth for the moral library.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE), with original VideoPlayer attribution retained.
+See [third-party notices](THIRD_PARTY_NOTICES.md) for external libraries, fonts
+and services. The screenshot illustrates a personal library; no music is included.

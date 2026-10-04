@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 VideoPlayer contributors
+Copyright (c) 2026 MusicPlayer contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +25,4 @@ SOFTWARE.
 
 Third-party software:
 
-- [MediaBunny](https://github.com/Vanilagy/mediabunny) (vendor/mediabunny.min.cjs)
-  is licensed under the Mozilla Public License 2.0 (MPL-2.0). See
-  https://github.com/Vanilagy/mediabunny/blob/main/LICENSE for details.
+Third-party components retain their own licenses. See THIRD_PARTY_NOTICES.md.
